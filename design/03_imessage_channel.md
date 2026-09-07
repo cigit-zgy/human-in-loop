@@ -6,7 +6,7 @@ role: design_authority
 summary: >
   Defines a free iMessage-only channel backed by the external openclaw/imsg CLI,
   including distinct-peer and same-Apple-Account operation with strict request
-  correlation and explicit no-SMS fail-closed behavior.
+  correlation, compact notification presentation, and explicit no-SMS fail-closed behavior.
 operational_projection:
   - src-tauri/src/channels/imessage.rs
   - src-tauri/src/commands/
@@ -45,7 +45,7 @@ finite commands: imsg chats / history / send --json where applicable
 long-lived receive: imsg watch --chat-id <id> --json
 ```
 
-Do not use Advanced IMCore, SIP disabling, private framework injection, typing/read-receipt features, or other advanced bridge features.
+Do not use Advanced IMCore, SIP disabling, private framework injection, typing/read-receipt features, edit/unsend/delete bridge features, or other advanced bridge features.
 
 # Configuration and identity mode
 
@@ -134,12 +134,13 @@ For each supported request:
 
 1. Validate configuration, identity mode, and `imsg` availability/version.
 2. If a resolved direct chat exists, validate that it still represents the configured destination and iMessage service as far as documented local data permits.
-3. Render the bounded structured text and allocate the collision-safe request token before mutation.
+3. Render the compact bounded structured notification defined by `01_interaction_protocol.md` and allocate the collision-safe request token before mutation.
 4. Establish a pre-send cursor/time boundary.
 5. If one admitted decision image exists, stage/send it through the permitted iMessage file path; otherwise send text only.
 6. Use explicit iMessage service selection for every direct send.
 7. Confirm or resolve the actual outgoing request row/chat after send when local database evidence is available.
 8. Treat uncertain send outcomes according to `imsg`'s reported disposition; do not blindly retry a mutation with an uncertain outcome.
+9. One canonical request causes at most one application send mutation unless the caller initiates a new canonical request; platform synchronization duplicates are not application retries.
 
 # Receive semantics
 
@@ -180,6 +181,27 @@ In `same_account` mode, accepting `is_from_me=true` is safe only because the com
 
 Other chat traffic, malformed answers, stale tokens, wrong-chat messages, pre-send history, duplicate/late replies, reactions, and images are ignored for terminal resolution. Exactly one terminal answer may win.
 
+# Same-account synchronization and presentation
+
+A self-addressed iMessage under one Apple Account may be represented by Apple Messages as synchronized sender/recipient-visible copies across the user's devices. The application cannot reliably force Apple Messages to display one native bubble only while preserving the public, SIP-intact transport boundary.
+
+This behavior is treated as a **presentation limitation**, not as a duplicate-send condition, provided application evidence shows one canonical request produced exactly one `imsg send` mutation.
+
+The supported mitigation is the compact renderer in `01_interaction_protocol.md`.
+
+The application MUST NOT attempt visual deduplication through:
+
+```text
+message delete/unsend after delivery
+private IMCore bridge calls
+dylib injection
+SIP disabling
+direct mutation of chat.db
+disabling or altering the user's Messages/iCloud synchronization settings
+```
+
+The user keeps normal Apple Account and Messages synchronization behavior. Product correctness is defined by one application send and one accepted terminal result, not by the number of bubbles Apple chooses to display for a same-account self-addressed message.
+
 # Image behavior
 
 The channel may send at most one admitted PNG/JPEG decision image from the canonical request. Sending a file must stay on the iMessage path; attachment handling may never cause SMS/MMS fallback.
@@ -217,6 +239,9 @@ resolved send/watch remain scoped to one configured direct conversation
 strict post-send correlation rejects ambiguous/stale/wrong-chat replies
 same_account works without requiring a second Apple Account
 self-authored synchronization cannot make the outgoing request itself resolve as an answer
+one canonical request causes exactly one application send mutation
+compact rendering keeps same-account duplicate presentation bounded and decision-readable
+no delete/unsend/private-bridge workaround is introduced
 exactly one terminal answer is accepted
 watcher processes are terminated/reaped on every terminal path
 ```
