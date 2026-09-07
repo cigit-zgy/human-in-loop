@@ -1904,20 +1904,23 @@ async fn handle_submit_confirm(
                 .fallback(ConfirmFallbackReason::NoAvailableChannel);
         }
     }
-    attach_confirm_im_channels(&entry, state, &config, &im_candidates).await;
-    for channel in &im_candidates {
-        mark_watch_disturbed(state, channel);
-    }
-    ensure_inbound_listeners(state).await;
-
-    let outcome = tokio::select! {
-        outcome = final_rx.recv() => outcome,
-        _ = tokio::time::sleep_until(entry.deadline) => {
-            entry.coordinator.fallback(ConfirmFallbackReason::Expired);
-            final_rx.recv().await
+    let setup = async {
+        attach_confirm_im_channels(&entry, state, &config, &im_candidates).await;
+        for channel in &im_candidates {
+            mark_watch_disturbed(state, channel);
         }
-        _ = wait_cli_eof(&mut reader) => {
-            entry.coordinator.cancel();
+        ensure_inbound_listeners(state).await;
+    };
+    let outcome = match await_confirm_while_dispatching(
+        &entry,
+        &mut final_rx,
+        setup,
+        wait_cli_eof(&mut reader),
+    )
+    .await
+    {
+        Ok(outcome) => outcome,
+        Err(()) => {
             update_popup_focus(state, |focus| focus.terminal(&request_id));
             entry.cancel.notify_waiters();
             state.registry.remove_confirm(&request_id);
@@ -1969,6 +1972,33 @@ async fn handle_submit_confirm(
     }
     state.watch.notify.notify_one();
     log(&format!("confirmation request {request_id} done"));
+}
+
+/// Dispatch may wait on a channel connection. EOF, expiry, and an already-winning channel
+/// must remain observable throughout setup, not only after every channel has connected.
+async fn await_confirm_while_dispatching(
+    entry: &request::ConfirmEntry,
+    final_rx: &mut tokio::sync::mpsc::UnboundedReceiver<ConfirmOutcome>,
+    setup: impl std::future::Future<Output = ()>,
+    disconnected: impl std::future::Future<Output = ()>,
+) -> Result<Option<ConfirmOutcome>, ()> {
+    tokio::pin!(setup, disconnected);
+    let mut setup_complete = false;
+    loop {
+        tokio::select! {
+            biased;
+            _ = &mut disconnected => {
+                entry.coordinator.cancel();
+                return Err(());
+            }
+            outcome = final_rx.recv() => return Ok(outcome),
+            _ = tokio::time::sleep_until(entry.deadline) => {
+                entry.coordinator.fallback(ConfirmFallbackReason::Expired);
+                return Ok(final_rx.recv().await);
+            }
+            _ = &mut setup, if !setup_complete => setup_complete = true,
+        }
+    }
 }
 
 /// CLI 提交一次任务：建请求、spawn GUI Helper、流式回结果；CLI 断开则取消。
@@ -4061,6 +4091,81 @@ mod tests {
     use crate::config::AppConfig;
     use crate::i18n::Lang;
     use std::sync::Arc;
+
+    #[tokio::test(start_paused = true)]
+    async fn confirmation_setup_cannot_hide_disconnect_expiry_or_another_winner() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        struct SetupDrop(Arc<AtomicBool>);
+        impl Drop for SetupDrop {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        for mode in ["disconnect", "expiry", "winner"] {
+            let spec = serde_json::from_value(serde_json::json!({
+                "title": "Synthetic setup", "context": [],
+                "detail": {"summary": "Continue?", "body_md": ""},
+                "choices": [
+                    {"id": "continue", "label": "Continue", "description": "", "role": "default"},
+                    {"id": "stop", "label": "Stop", "description": "", "role": "default"}
+                ],
+                "presentation": {"type": "singleSelectSubmit", "submit_label": "Submit"},
+                "dismissActionId": "stop"
+            }))
+            .unwrap();
+            let (entry, mut rx) = super::request::create_internal_confirm(
+                spec,
+                "feishu",
+                "en",
+                "",
+                "Codex",
+                std::time::Duration::from_secs(1),
+            )
+            .unwrap();
+            let dropped = Arc::new(AtomicBool::new(false));
+            let started = tokio::sync::Notify::new();
+            let setup = async {
+                let _guard = SetupDrop(dropped.clone());
+                started.notify_one();
+                if mode == "winner" {
+                    assert!(entry.coordinator.submit_wire(0, None, "imessage").unwrap());
+                }
+                std::future::pending::<()>().await;
+            };
+            let disconnected = async {
+                if mode == "disconnect" {
+                    started.notified().await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            };
+            let result =
+                super::await_confirm_while_dispatching(&entry, &mut rx, setup, disconnected).await;
+            assert!(
+                dropped.load(Ordering::SeqCst),
+                "{mode}: setup must be dropped"
+            );
+            assert!(entry.coordinator.is_terminal());
+            match mode {
+                "disconnect" => assert!(result.is_err()),
+                "expiry" => assert_eq!(
+                    result.unwrap(),
+                    Some(super::ConfirmOutcome::Fallback(
+                        crate::models::ConfirmFallbackReason::Expired
+                    ))
+                ),
+                "winner" => {
+                    let Some(super::ConfirmOutcome::Final(result)) = result.unwrap() else {
+                        panic!("expected decision")
+                    };
+                    assert_eq!(result.action_id, "continue");
+                    assert_eq!(result.source_channel_id, "imessage");
+                    assert!(!entry.coordinator.submit_wire(1, None, "feishu").unwrap());
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
 
     #[test]
     fn popup_delivery_is_disabled() {

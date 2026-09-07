@@ -251,7 +251,8 @@ mod tests {
         assert!(cli.contains("AskHuman --show-last"));
         assert!(!cli.contains("MCP `show_last`"));
         let mcp = session_start_output(AgentKind::Claude, Mode::Mcp, Some(&input)).unwrap();
-        assert!(mcp.contains("MCP `show_last`"));
+        assert!(mcp.contains("canonical result from tool history"));
+        assert!(!mcp.contains("show_last"));
         assert!(!mcp.contains("AskHuman --show-last"));
         assert!(session_start_output(AgentKind::Codex, Mode::None, Some(&input)).is_none());
     }
@@ -446,5 +447,33 @@ mod tests {
             pre_tool_output_for_mode(AgentKind::Claude, Mode::Mcp, Some(&other), &env).is_none()
         );
         assert!(pre_tool_output_for_mode(AgentKind::Claude, Mode::Mcp, None, &env).is_none());
+    }
+
+    #[test]
+    fn bounded_ask_human_does_not_receive_legacy_hidden_context_fields() {
+        // ask_human carries canonical repository/source context directly. Injecting the
+        // old private session token would add an unsupported field to its public schema.
+        for (kind, name) in [
+            (AgentKind::Claude, "mcp__askhuman__ask_human"),
+            (AgentKind::Cursor, "MCP:ask_human"),
+            (AgentKind::Grok, "askhuman__ask_human"),
+            (AgentKind::Codex, "mcp__askhuman__ask_human"),
+        ] {
+            let input = json!({
+                "tool_name": name,
+                "tool_input": {
+                    "source_agent": "Codex",
+                    "question": "Continue?",
+                    "choices": [
+                        {"id": "continue", "label": "Continue"},
+                        {"id": "stop", "label": "Stop"}
+                    ]
+                },
+                "session_id": "session"
+            });
+            assert!(
+                pre_tool_output_for_mode(kind, Mode::Mcp, Some(&input), &HashMap::new()).is_none()
+            );
+        }
     }
 }

@@ -769,7 +769,7 @@ fn is_executable_file(path: &Path) -> bool {
     }
 }
 
-/// MCP whitelist: `mcp__askhuman__{ask,whats_next,todo_add}` where every readable config layer
+/// MCP whitelist: `mcp__askhuman__ask_human` where every readable config layer
 /// defining an `askhuman` server points its `command` at this binary, and none sets an
 /// explicit prompt/writes approval mode for the tool (user intent wins, mirrors D40).
 fn mcp_self_call(tool_name: &str, cwd: &str) -> bool {
@@ -784,9 +784,7 @@ fn mcp_self_call(tool_name: &str, cwd: &str) -> bool {
 
 fn mcp_self_call_at(tool_name: &str, cwd: &str, codex_home: &Path, current_exe: &Path) -> bool {
     let tool = match tool_name {
-        "mcp__askhuman__ask" => "ask",
-        "mcp__askhuman__whats_next" => "whats_next",
-        "mcp__askhuman__todo_add" => "todo_add",
+        "mcp__askhuman__ask_human" => "ask_human",
         _ => return false,
     };
     let Ok(current) = std::fs::canonicalize(current_exe) else {
@@ -875,7 +873,7 @@ pub(crate) fn claude_self_call_at(
             !claude_explicit_rule_conflict(cwd, home, true)
                 && shell_self_call_at(script, cwd, current_exe, path_var)
         }
-        "mcp__askhuman__ask" | "mcp__askhuman__whats_next" | "mcp__askhuman__todo_add" => {
+        "mcp__askhuman__ask_human" => {
             !claude_explicit_rule_conflict(cwd, home, false)
                 && claude_mcp_self_call_at(cwd, home, current_exe)
         }
@@ -2273,24 +2271,20 @@ mod tests {
 
         write_config(&exe.to_string_lossy(), "");
         assert!(mcp_self_call_at(
-            "mcp__askhuman__ask",
+            "mcp__askhuman__ask_human",
             &cwd,
             &codex_home,
             &exe
         ));
-        assert!(mcp_self_call_at(
-            "mcp__askhuman__whats_next",
-            &cwd,
-            &codex_home,
-            &exe
-        ));
-        assert!(mcp_self_call_at(
-            "mcp__askhuman__todo_add",
-            &cwd,
-            &codex_home,
-            &exe
-        ));
-        // Other tools of the server (none exist today) and other servers never match.
+        for name in ["ask", "whats_next", "todo_add", "show_last"] {
+            assert!(!mcp_self_call_at(
+                &format!("mcp__askhuman__{name}"),
+                &cwd,
+                &codex_home,
+                &exe,
+            ));
+        }
+        // Only the maintained tool on the verified server can avoid recursive approval.
         assert!(!mcp_self_call_at(
             "mcp__askhuman__evil",
             &cwd,
@@ -2310,17 +2304,31 @@ mod tests {
             "default_tools_approval_mode = \"prompt\"\n",
         );
         assert!(!mcp_self_call_at(
-            "mcp__askhuman__ask",
+            "mcp__askhuman__ask_human",
             &cwd,
             &codex_home,
             &exe
         ));
 
+        // A per-tool policy must use the maintained tool's exact name and still win.
+        for mode in ["prompt", "writes"] {
+            write_config(
+                &exe.to_string_lossy(),
+                &format!("[mcp_servers.askhuman.tools.ask_human]\napproval_mode = \"{mode}\"\n"),
+            );
+            assert!(!mcp_self_call_at(
+                "mcp__askhuman__ask_human",
+                &cwd,
+                &codex_home,
+                &exe
+            ));
+        }
+
         // A server pointing at a different binary is not us.
         let impostor = fake_exe(&root, "NotAskHuman");
         write_config(&impostor.to_string_lossy(), "");
         assert!(!mcp_self_call_at(
-            "mcp__askhuman__ask",
+            "mcp__askhuman__ask_human",
             &cwd,
             &codex_home,
             &exe
@@ -2329,7 +2337,7 @@ mod tests {
         // Relative command strings are unresolvable -> fail closed.
         write_config("AskHuman", "");
         assert!(!mcp_self_call_at(
-            "mcp__askhuman__ask",
+            "mcp__askhuman__ask_human",
             &cwd,
             &codex_home,
             &exe
@@ -2338,7 +2346,7 @@ mod tests {
         // No layer defines the server at all -> no whitelist.
         std::fs::remove_file(codex_home.join("config.toml")).unwrap();
         assert!(!mcp_self_call_at(
-            "mcp__askhuman__ask",
+            "mcp__askhuman__ask_human",
             &cwd,
             &codex_home,
             &exe
@@ -2427,7 +2435,7 @@ mod tests {
         let project = root.join("proj");
         std::fs::create_dir_all(project.join(".git")).unwrap();
         let cwd = project.to_string_lossy().to_string();
-        let input = claude_input("mcp__askhuman__ask", json!({ "questions": [] }), &cwd);
+        let input = claude_input("mcp__askhuman__ask_human", json!({ "choices": [] }), &cwd);
 
         // No layer defines the server -> no whitelist.
         assert!(!claude_self_call_at(&input, &home, &exe, None));
@@ -2443,10 +2451,10 @@ mod tests {
         };
         user_config(&exe.to_string_lossy());
         assert!(claude_self_call_at(&input, &home, &exe, None));
-        let whats_next = claude_input("mcp__askhuman__whats_next", json!({}), &cwd);
-        assert!(claude_self_call_at(&whats_next, &home, &exe, None));
-        let todo_add = claude_input("mcp__askhuman__todo_add", json!({ "text": "x" }), &cwd);
-        assert!(claude_self_call_at(&todo_add, &home, &exe, None));
+        for name in ["ask", "whats_next", "todo_add", "show_last"] {
+            let legacy = claude_input(&format!("mcp__askhuman__{name}"), json!({}), &cwd);
+            assert!(!claude_self_call_at(&legacy, &home, &exe, None));
+        }
         // Other tools / servers never match.
         let other = claude_input("mcp__askhuman__evil", json!({}), &cwd);
         assert!(!claude_self_call_at(&other, &home, &exe, None));
@@ -2504,7 +2512,7 @@ mod tests {
         std::fs::create_dir_all(home.join(".claude")).unwrap();
         std::fs::write(
             home.join(".claude/settings.json"),
-            r#"{ "permissions": { "ask": ["mcp__askhuman__ask"] } }"#,
+            r#"{ "permissions": { "ask": ["mcp__askhuman__ask_human"] } }"#,
         )
         .unwrap();
         assert!(!claude_self_call_at(&input, &home, &exe, None));
@@ -2540,7 +2548,7 @@ mod tests {
         .unwrap();
         let cwd = project.to_string_lossy().to_string();
         assert!(!mcp_self_call_at(
-            "mcp__askhuman__ask",
+            "mcp__askhuman__ask_human",
             &cwd,
             &codex_home,
             &exe

@@ -10,6 +10,16 @@ The working application is adapted from the pinned AskHuman 0.13.1 source baseli
 
 Feishu retains its long-connection and interactive-card flow. Apple Messages support requires the external `imsg` executable plus Full Disk Access and Messages automation permission on macOS. Configure an approved recipient and choose `distinct_peer` or `same_account`; an existing direct iMessage chat is revalidated, while the first structured confirmation can bootstrap a missing chat through explicit iMessage-only delivery.
 
+## Local MCP interface
+
+Configure an MCP client to launch the installed `AskHuman` executable with the argument `mcp`. The server uses local stdio and exposes exactly one tool, `ask_human`, over the existing confirmation coordinator and configured channels.
+
+`ask_human` requires `source_agent`, `question`, and 2–6 `choices`, each with a unique stable `id` and compact `label`. Supply `repository_path` for every repository-associated decision; the server resolves the GitHub origin locally and displays its repository slug, such as `Codex · human-in-loop`. Optional fields are `context`, `recommended_choice` (a choice id), and `request_id`.
+
+The blocking call returns `request_id`, `selected_choice_id`, and `source_channel_id`. The selected id is the semantic choice id, not the phone's numeric option. Cancellation or client disconnect cancels the pending confirmation and cleans up its channel watchers. Keep decision questions and labels compact; the existing channel admission limits still apply.
+
+Recipient identity, channel credentials, transport commands, files, and free-form questionnaires are not MCP inputs. Configuration stays in the local application. This interface provides no public HTTP endpoint or GitHub message relay. Remote MCP deployment and authentication are separate work; local stdio support does not establish ChatGPT Pro remote mutation support. See the [MCP contract](design/05_mcp_interface.md).
+
 ## Architecture
 
 ```text

@@ -489,7 +489,8 @@ mod tests {
             ),
             protected_paths: vec![],
         };
-        let model = enrich(input);
+        let model =
+            super::super::safety::with_test_home(dir.path().join("fixture-home"), || enrich(input));
         assert_eq!(model.snapshot_status, SnapshotStatus::SnapshotReady);
         assert_eq!(model.additions, 1);
         assert_eq!(model.deletions, 1);
@@ -510,7 +511,8 @@ mod tests {
             ),
             protected_paths: vec![],
         };
-        let model = enrich(input);
+        let model =
+            super::super::safety::with_test_home(dir.path().join("fixture-home"), || enrich(input));
         assert_eq!(model.snapshot_status, SnapshotStatus::NewFile);
         assert_eq!(model.additions, 1);
     }

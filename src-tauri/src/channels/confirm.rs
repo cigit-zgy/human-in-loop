@@ -584,164 +584,165 @@ fn release_imessage_token(token: &str, request_id: &str) {
 /// absent from the general Ask channel path: free-form and form interactions are unsupported.
 pub fn start_imessage(entry: Arc<ConfirmEntry>, config: crate::config::IMessageChannelConfig) {
     tokio::spawn(async move {
-        use crate::channels::imessage::{self, HealthState};
-
-        let channel = "imessage";
-        let readiness = match imessage::prepare(&config).await {
-            Ok(readiness) => readiness,
-            Err(health) => {
-                crate::channels::health::report(channel, health.as_str());
-                fail(&entry, channel, health.as_str());
-                return;
-            }
-        };
-
+        // Register before checking the terminal state: cancellation can race with channel setup.
+        let cancelled = entry.cancel.notified();
+        tokio::pin!(cancelled);
+        cancelled.as_mut().enable();
+        if entry.coordinator.is_terminal() {
+            return;
+        }
         let token = imessage_tokens()
             .lock()
             .unwrap()
             .allocate(&entry.request_id);
-        let repository = match crate::project::repository_identity(&entry.project) {
-            crate::project::RepositoryIdentity::NonRepository => None,
-            crate::project::RepositoryIdentity::Github(repository) => Some(repository),
-            crate::project::RepositoryIdentity::Unavailable => {
-                release_imessage_token(&token, &entry.request_id);
-                fail(
-                    &entry,
-                    channel,
-                    "unsupported: RepositoryIdentityUnavailable",
-                );
-                return;
-            }
-        };
-        let rendered = match imessage::render_confirmation(
-            &entry.request,
-            &token,
-            &entry.source,
-            repository.as_deref(),
+        tokio::select! {
+            biased;
+            _ = &mut cancelled => {}
+            _ = run_imessage(&entry, &config, &token) => {}
+        }
+        release_imessage_token(&token, &entry.request_id);
+    });
+}
+
+async fn run_imessage(
+    entry: &Arc<ConfirmEntry>,
+    config: &crate::config::IMessageChannelConfig,
+    token: &str,
+) {
+    use crate::channels::imessage::{self, HealthState};
+
+    let channel = "imessage";
+    let readiness = match imessage::prepare(config).await {
+        Ok(readiness) => readiness,
+        Err(health) => {
+            crate::channels::health::report(channel, health.as_str());
+            fail(entry, channel, health.as_str());
+            return;
+        }
+    };
+
+    let repository = match crate::project::repository_identity(&entry.project) {
+        crate::project::RepositoryIdentity::NonRepository => None,
+        crate::project::RepositoryIdentity::Github(repository) => Some(repository),
+        crate::project::RepositoryIdentity::Unavailable => {
+            fail(entry, channel, "unsupported: RepositoryIdentityUnavailable");
+            return;
+        }
+    };
+    let rendered = match imessage::render_confirmation(
+        &entry.request,
+        token,
+        &entry.source,
+        repository.as_deref(),
+    ) {
+        Ok(rendered) => rendered,
+        Err(reason) => {
+            fail(entry, channel, format!("unsupported: {reason:?}"));
+            return;
+        }
+    };
+    let image = match entry.request.decision_image.as_ref() {
+        Some(image) => match imessage::admit_image(
+            Some(std::path::Path::new(&image.path)),
+            image.required_for_decision,
         ) {
-            Ok(rendered) => rendered,
+            Ok(image) => image,
             Err(reason) => {
-                release_imessage_token(&token, &entry.request_id);
-                fail(&entry, channel, format!("unsupported: {reason:?}"));
+                fail(entry, channel, format!("unsupported: {reason:?}"));
                 return;
             }
-        };
-        let image = match entry.request.decision_image.as_ref() {
-            Some(image) => match imessage::admit_image(
-                Some(std::path::Path::new(&image.path)),
-                image.required_for_decision,
-            ) {
-                Ok(image) => image,
-                Err(reason) => {
-                    release_imessage_token(&token, &entry.request_id);
-                    fail(&entry, channel, format!("unsupported: {reason:?}"));
-                    return;
-                }
-            },
-            None => None,
-        };
-        let pre_send = match imessage::pre_send_boundary(&readiness).await {
-            Ok(boundary) => boundary,
-            Err(health) => {
-                crate::channels::health::report(channel, health.as_str());
-                release_imessage_token(&token, &entry.request_id);
-                fail(&entry, channel, health.as_str());
-                return;
-            }
-        };
-        let receipt = match imessage::send(&config, &rendered.text, image.as_deref()).await {
-            Ok(receipt) => receipt,
-            Err(health) => {
-                crate::channels::health::report(channel, health.as_str());
-                release_imessage_token(&token, &entry.request_id);
-                fail(&entry, channel, health.as_str());
-                return;
-            }
-        };
-        let resolved = match imessage::resolve_after_send(
-            &config,
-            &readiness,
-            &pre_send,
-            &receipt,
-            &rendered.text,
-        )
-        .await
+        },
+        None => None,
+    };
+    let pre_send = match imessage::pre_send_boundary(&readiness).await {
+        Ok(boundary) => boundary,
+        Err(health) => {
+            crate::channels::health::report(channel, health.as_str());
+            fail(entry, channel, health.as_str());
+            return;
+        }
+    };
+    let receipt = match imessage::send(config, &rendered.text, image.as_deref()).await {
+        Ok(receipt) => receipt,
+        Err(health) => {
+            crate::channels::health::report(channel, health.as_str());
+            fail(entry, channel, health.as_str());
+            return;
+        }
+    };
+    let resolved =
+        match imessage::resolve_after_send(config, &readiness, &pre_send, &receipt, &rendered.text)
+            .await
         {
             Ok(resolved) => resolved,
             Err(health) => {
                 crate::channels::health::report(channel, health.as_str());
-                release_imessage_token(&token, &entry.request_id);
-                fail(&entry, channel, health.as_str());
+                fail(entry, channel, health.as_str());
                 return;
             }
         };
-        if let Err(health) = imessage::persist_resolved_chat(&config, &resolved) {
-            crate::channels::health::report(channel, health.as_str());
-            release_imessage_token(&token, &entry.request_id);
-            fail(&entry, channel, health.as_str());
-            return;
-        }
-        let (mut child, mut reader) =
-            match imessage::spawn_watch(resolved.chat.id, resolved.sent.row_id) {
-                Ok(watch) => watch,
-                Err(health) => {
-                    crate::channels::health::report(channel, health.as_str());
-                    release_imessage_token(&token, &entry.request_id);
-                    fail(&entry, channel, health.as_str());
-                    return;
-                }
-            };
-        if !entry.mark_ready(channel, resolved.sent.guid.clone()) {
-            let _ = child.kill().await;
-            let _ = child.wait().await;
-            release_imessage_token(&token, &entry.request_id);
-            return;
-        }
-        crate::channels::health::clear(channel);
+    if let Err(health) = imessage::persist_resolved_chat(config, &resolved) {
+        crate::channels::health::report(channel, health.as_str());
+        fail(entry, channel, health.as_str());
+        return;
+    }
+    let (mut child, mut reader) =
+        match imessage::spawn_watch(resolved.chat.id, resolved.sent.row_id) {
+            Ok(watch) => watch,
+            Err(health) => {
+                crate::channels::health::report(channel, health.as_str());
+                fail(entry, channel, health.as_str());
+                return;
+            }
+        };
+    if !entry.mark_ready(channel, resolved.sent.guid.clone()) {
+        let _ = child.kill().await;
+        let _ = child.wait().await;
+        return;
+    }
+    crate::channels::health::clear(channel);
 
-        let mut pending = imessage::PendingReplies::default();
-        pending.register(
-            &token,
-            &entry.request_id,
-            imessage::RequestBoundary {
-                identity_mode: config.identity_mode,
-                chat_id: resolved.chat.id,
-                sent_row_id: resolved.sent.row_id,
-                sent_guid: resolved.sent.guid,
-            },
-            rendered.choice_indices,
-            entry.request.expires_at_ms,
-        );
-        let mut watch_failed = false;
-        loop {
-            tokio::select! {
-                _ = entry.cancel.notified() => break,
-                inbound = imessage::read_inbound_line(&mut reader) => match inbound {
-                    Ok(Some(message)) => {
-                        let Some(reply) = pending.resolve(&message, imessage::unix_millis(std::time::SystemTime::now())) else {
-                            continue;
-                        };
-                        if reply.request_id == entry.request_id {
-                            let _ = entry.coordinator.submit_wire(reply.choice_index, None, channel);
-                            break;
-                        }
-                    }
-                    Ok(None) => {}
-                    Err(_) => {
-                        watch_failed = true;
+    let mut pending = imessage::PendingReplies::default();
+    pending.register(
+        token,
+        &entry.request_id,
+        imessage::RequestBoundary {
+            identity_mode: config.identity_mode,
+            chat_id: resolved.chat.id,
+            sent_row_id: resolved.sent.row_id,
+            sent_guid: resolved.sent.guid,
+        },
+        rendered.choice_indices,
+        entry.request.expires_at_ms,
+    );
+    let mut watch_failed = false;
+    loop {
+        tokio::select! {
+            _ = entry.cancel.notified() => break,
+            inbound = imessage::read_inbound_line(&mut reader) => match inbound {
+                Ok(Some(message)) => {
+                    let Some(reply) = pending.resolve(&message, imessage::unix_millis(std::time::SystemTime::now())) else {
+                        continue;
+                    };
+                    if reply.request_id == entry.request_id {
+                        let _ = entry.coordinator.submit_wire(reply.choice_index, None, channel);
                         break;
                     }
                 }
+                Ok(None) => {}
+                Err(_) => {
+                    watch_failed = true;
+                    break;
+                }
             }
         }
-        let _ = child.kill().await;
-        let _ = child.wait().await;
-        release_imessage_token(&token, &entry.request_id);
-        if watch_failed && !entry.coordinator.is_terminal() {
-            crate::channels::health::report(channel, HealthState::WatchFailed.as_str());
-            fail(&entry, channel, HealthState::WatchFailed.as_str());
-        }
-    });
+    }
+    let _ = child.kill().await;
+    let _ = child.wait().await;
+    if watch_failed && !entry.coordinator.is_terminal() {
+        crate::channels::health::report(channel, HealthState::WatchFailed.as_str());
+        fail(entry, channel, HealthState::WatchFailed.as_str());
+    }
 }
 
 pub fn start_slack(

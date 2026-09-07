@@ -520,6 +520,7 @@ async fn list_chats(limit: usize, deadline: Duration) -> Result<Vec<ChatRecord>,
     let output = timeout(
         deadline,
         Command::new("imsg")
+            .kill_on_drop(true)
             .args(["chats", "--limit", &limit.to_string(), "--json"])
             .output(),
     )
@@ -552,7 +553,10 @@ pub async fn prepare(config: &IMessageChannelConfig) -> Result<Readiness, Health
     }
     let version = timeout(
         Duration::from_secs(5),
-        Command::new("imsg").arg("--version").output(),
+        Command::new("imsg")
+            .kill_on_drop(true)
+            .arg("--version")
+            .output(),
     )
     .await;
     match version {
@@ -622,6 +626,7 @@ pub async fn send(
     let output = timeout(
         Duration::from_secs(60),
         Command::new("imsg")
+            .kill_on_drop(true)
             .args(direct_send_args(config.recipient.trim(), text, image))
             .output(),
     )
@@ -659,6 +664,7 @@ async fn history(chat_id: i64, limit: usize) -> Result<Vec<InboundMessage>, Heal
     let output = timeout(
         Duration::from_secs(10),
         Command::new("imsg")
+            .kill_on_drop(true)
             .args([
                 "history",
                 "--chat-id",

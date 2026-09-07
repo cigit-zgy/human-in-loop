@@ -77,7 +77,9 @@ pub fn repository_identity(key: &str) -> RepositoryIdentity {
     };
     let Ok(output) = Command::new("git")
         .arg("-C")
-        .arg(root)
+        .arg(&root)
+        // A malformed nearest .git must not fall through to an enclosing repository.
+        .env("GIT_CEILING_DIRECTORIES", root.parent().unwrap_or(&root))
         .args(["remote", "get-url", "origin"])
         .output()
     else {
@@ -103,7 +105,15 @@ fn repository_name_from_github_remote(remote: &str) -> Option<String> {
     let owner = segments.next()?;
     let repository = segments.next()?;
     let repository = repository.strip_suffix(".git").unwrap_or(repository);
-    if owner.is_empty() || repository.is_empty() || segments.next().is_some() {
+    if owner.is_empty()
+        || !owner.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        || repository.is_empty()
+        || matches!(repository, "." | "..")
+        || !repository
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        || segments.next().is_some()
+    {
         return None;
     }
     Some(repository.to_string())
@@ -133,10 +143,11 @@ mod tests {
 
     #[test]
     fn no_git_returns_none() {
-        let dir = tempdir().unwrap();
-        let sub = dir.path().join("x");
-        fs::create_dir_all(&sub).unwrap();
-        assert!(git_root(&sub).is_none());
+        // Test scratch may itself live inside a repository. The filesystem root has no parent
+        // repository and needs no out-of-project fixture writes.
+        let current = std::env::current_dir().unwrap();
+        let root = current.ancestors().last().unwrap();
+        assert!(git_root(root).is_none());
     }
 
     #[test]
@@ -154,6 +165,27 @@ mod tests {
         assert_eq!(
             repository_name_from_github_remote("git@github.com:cigit-zgy/water-biomodel-agent.git"),
             Some("water-biomodel-agent".into())
+        );
+    }
+
+    #[test]
+    fn malformed_remote_identity_cannot_become_a_phone_label() {
+        for remote in [
+            "https://github.com/owner/repo?token=value",
+            "https://github.com/owner/repo#fragment",
+            "https://github.com/owner/repo name.git",
+            "https://github.com/owner/repo%20name.git",
+            "https://github.com/owner/..",
+            "https://github.com/owner/repo/extra",
+            "https://github.com.evil.example/owner/repo",
+            "git@github.com:owner/repo\nspoofed",
+            "https://gitlab.com/owner/repo",
+        ] {
+            assert_eq!(repository_name_from_github_remote(remote), None, "{remote}");
+        }
+        assert_eq!(
+            repository_name_from_github_remote("ssh://git@github.com/owner/repo_name.v1.git"),
+            Some("repo_name.v1".into())
         );
     }
 
@@ -188,9 +220,10 @@ mod tests {
 
     #[test]
     fn non_repository_has_no_github_repository_label() {
-        let dir = tempdir().unwrap();
+        let current = std::env::current_dir().unwrap();
+        let root = current.ancestors().last().unwrap();
         assert_eq!(
-            repository_identity(dir.path().to_str().unwrap()),
+            repository_identity(root.to_str().unwrap()),
             RepositoryIdentity::NonRepository
         );
     }

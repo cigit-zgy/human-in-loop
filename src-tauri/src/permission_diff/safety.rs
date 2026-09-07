@@ -4,6 +4,24 @@ use std::fs::OpenOptions;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
+#[cfg(test)]
+thread_local! {
+    static TEST_HOME: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Scope only the test's protected-directory policy; never mutate the process environment.
+#[cfg(test)]
+pub(super) fn with_test_home<T>(home: PathBuf, test: impl FnOnce() -> T) -> T {
+    struct Restore(Option<PathBuf>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            TEST_HOME.with(|slot| slot.replace(self.0.take()));
+        }
+    }
+    let _restore = Restore(TEST_HOME.with(|slot| slot.replace(Some(home))));
+    test()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadFailure {
     Missing,
@@ -124,8 +142,13 @@ pub fn read_text_limited(
     }
     let resolved = resolve_parent_symlinks(&resolved)?;
     #[cfg(target_os = "macos")]
-    if dirs::home_dir().is_some_and(|home| is_macos_protected(&resolved, &home)) {
-        return Err(ReadFailure::Unreadable);
+    {
+        let home = dirs::home_dir();
+        #[cfg(test)]
+        let home = TEST_HOME.with(|slot| slot.borrow().clone()).or(home);
+        if home.is_some_and(|home| is_macos_protected(&resolved, &home)) {
+            return Err(ReadFailure::Unreadable);
+        }
     }
 
     let mut options = OpenOptions::new();
@@ -234,27 +257,61 @@ mod tests {
         let dir = tempdir().unwrap();
         std::fs::write(dir.path().join("ok.txt"), "hello").unwrap();
         std::fs::write(dir.path().join("bad.txt"), [0xff, 0xfe]).unwrap();
-        let protected = HashSet::new();
-        let mut total = 0;
-        assert_eq!(
-            read_text_limited(
-                dir.path().to_str().unwrap(),
-                "ok.txt",
-                &protected,
-                &mut total
-            )
-            .unwrap(),
-            "hello"
-        );
-        assert_eq!(
-            read_text_limited(
-                dir.path().to_str().unwrap(),
-                "bad.txt",
-                &protected,
-                &mut total
-            )
-            .unwrap_err(),
-            ReadFailure::NonUtf8
-        );
+        with_test_home(dir.path().join("fixture-home"), || {
+            let protected = HashSet::new();
+            let mut total = 0;
+            assert_eq!(
+                read_text_limited(
+                    dir.path().to_str().unwrap(),
+                    "ok.txt",
+                    &protected,
+                    &mut total
+                )
+                .unwrap(),
+                "hello"
+            );
+            assert_eq!(
+                read_text_limited(
+                    dir.path().to_str().unwrap(),
+                    "bad.txt",
+                    &protected,
+                    &mut total
+                )
+                .unwrap_err(),
+                ReadFailure::NonUtf8
+            );
+        });
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn scoped_test_home_preserves_protected_guard_and_restores_after_panic() {
+        let dir = tempdir().unwrap();
+        let home = dir.path().canonicalize().unwrap();
+        std::fs::create_dir(home.join("Documents")).unwrap();
+        std::fs::write(home.join("Documents/private.txt"), "test fixture").unwrap();
+        assert!(TEST_HOME.with(|slot| slot.borrow().is_none()));
+        with_test_home(home.clone(), || {
+            let mut total = 0;
+            assert_eq!(
+                read_text_limited(
+                    home.to_str().unwrap(),
+                    "Documents/private.txt",
+                    &HashSet::new(),
+                    &mut total
+                ),
+                Err(ReadFailure::Unreadable)
+            );
+            assert_eq!(total, 0);
+            let result = std::panic::catch_unwind(|| {
+                with_test_home(home.join("nested-home"), || panic!("test restoration"));
+            });
+            assert!(result.is_err());
+            assert_eq!(
+                TEST_HOME.with(|slot| slot.borrow().clone()),
+                Some(home.clone())
+            );
+        });
+        assert!(TEST_HOME.with(|slot| slot.borrow().is_none()));
     }
 }

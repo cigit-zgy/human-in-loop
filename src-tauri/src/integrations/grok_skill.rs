@@ -5,7 +5,7 @@
 //! `docs/specs/grok-cli-integration-research.md`），skill 是唯一能同时覆盖 Composer 与 Grok Build 的
 //! 入口。skill 属**弱约束**——模型需先判定相关才加载；本轮把 skill 重定位为「**无条件必读的交互协议**」，
 //! 在 `frontmatter` 的 `description` 第一句无条件要求「每个 session 先读本 skill」（消解「需要提问才加载」的
-//! 自指悖论），协议正文只对「调用 AskHuman 的 `ask`」声明「MCP 优先于 shell」，不禁止一般 shell 用法
+//! 自指悖论），协议正文只对「调用 AskHuman 的 `ask_human`」声明「MCP 优先于 shell」，不禁止一般 shell 用法
 //! （见 `prompts::grok_skill_body`）。
 //!
 //! 落盘为「整文件拥有」：安装/更新即覆盖为最新内容；卸载删除文件（目录空则一并删）。内容含托管标记，
@@ -28,7 +28,7 @@ pub const SKILL_MARK: &str = "<!-- AskHuman managed skill: DO NOT EDIT (managed 
 /// **为何全写进 `description`、不用 `when-to-use`**：实测（grok 0.2.82，Composer 与 Grok Build 两 harness）
 /// 证实 `when-to-use` 仅以 `Use when:` 标签拼在 `description` 之后、进同一段常驻文本，对「无条件必读」策略
 /// 无额外价值，故合并为单一 `description`。description 是 skill 唯一常驻注入 prompt 的字段（正文 body 需被
-/// 判定相关后才加载），因此把协议最关键的事实（普通输出人类不可见）前置到此处兜底。
+/// 判定相关后才加载），因此把支持的 MCP 工具与结构化确认边界前置到此处。
 fn frontmatter() -> String {
     "---\n\
 name: interaction-protocol\n\
@@ -36,9 +36,9 @@ description: >-\n  \
 Mandatory interaction protocol for this environment. You MUST read this skill FIRST in EVERY\n  \
 session, before doing anything else — unconditionally, for every task and topic, even if it seems\n  \
 unrelated, and do NOT wait until you have a question. It ALWAYS applies, with one exception: if\n  \
-you are a subagent, it does not apply to you. Key fact: the human user can ONLY see what is\n  \
-delivered through the AskHuman `ask` MCP tool;\n  \
-your normal chat output is invisible to them.\n\
+you are a subagent, it does not apply to you. Use the AskHuman `ask_human` MCP tool for\n  \
+bounded structured decisions with 2–6 stable choices. Complete task reports and longer material\n  \
+remain in the local task surface.\n\
 ---\n"
         .to_string()
 }
@@ -187,14 +187,17 @@ mod tests {
         let c = content();
         assert!(c.starts_with("---\n"));
         assert!(c.contains("name: interaction-protocol"));
-        // description 第一句须为「无条件必读」定位，且含「普通输出人类不可见」这条兜底事实。
+        // The installed skill must name the same bounded tool as the server and reference body.
         assert!(c.contains("You MUST read this skill FIRST in EVERY"));
         assert!(c.contains("It ALWAYS applies, with one exception: if"));
         assert!(c.contains("you are a subagent, it does not apply to you."));
         assert!(!c.contains("It ALWAYS applies, with no exceptions."));
-        assert!(c.contains("your normal chat output is invisible to them"));
+        assert!(c.contains("bounded structured decisions with 2–6 stable choices"));
         assert!(c.contains(SKILL_MARK));
         assert!(c.contains("<mandatory_interaction_protocol>"));
-        assert!(c.contains("the AskHuman `ask` tool"));
+        assert!(c.contains("AskHuman `ask_human` MCP tool"));
+        assert!(!c.contains("`ask`"));
+        assert!(!c.contains("show_last"));
+        assert!(!c.contains("whats_next"));
     }
 }

@@ -32,6 +32,7 @@ type TestSubmitter = Arc<
 >;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct AskHumanChoice {
     /// Stable semantic identifier returned unchanged when this choice wins.
     pub id: String,
@@ -40,6 +41,7 @@ pub struct AskHumanChoice {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct AskHumanParams {
     /// Local path inside the associated GitHub repository. Omit only for a genuinely
     /// non-repository decision. The displayed repository name is resolved from Git origin.
@@ -170,7 +172,7 @@ fn build_confirm_task(params: AskHumanParams) -> Result<ConfirmTask, String> {
         .choices
         .into_iter()
         .map(|choice| {
-            let id = required_compact(&choice.id, "choice id")?;
+            let id = required_identifier(&choice.id, "choice id")?;
             let label = required_compact(&choice.label, "choice label")?;
             if !ids.insert(id.clone()) {
                 return Err(format!("duplicate choice id: {id}"));
@@ -201,7 +203,13 @@ fn build_confirm_task(params: AskHumanParams) -> Result<ConfirmTask, String> {
             return Err("repository_path must not be empty".to_string())
         }
         Some(raw) => {
-            let project = crate::project::detect_from(Path::new(raw));
+            let path = Path::new(raw)
+                .canonicalize()
+                .map_err(|_| "repository_path must identify an existing directory".to_string())?;
+            if !path.is_dir() {
+                return Err("repository_path must identify an existing directory".to_string());
+            }
+            let project = crate::project::detect_from(&path);
             match crate::project::repository_identity(&project) {
                 crate::project::RepositoryIdentity::Github(_) => project,
                 crate::project::RepositoryIdentity::NonRepository => {
@@ -228,7 +236,7 @@ fn build_confirm_task(params: AskHumanParams) -> Result<ConfirmTask, String> {
         })
         .unwrap_or_default();
     let request_id = match params.request_id {
-        Some(value) => required_compact(&value, "request_id")?,
+        Some(value) => required_identifier(&value, "request_id")?,
         None => uuid::Uuid::new_v4().to_string(),
     };
     let dismiss_action_id = choices.last().expect("choice bound checked").id.clone();
@@ -274,6 +282,14 @@ fn required_compact(value: &str, field: &str) -> Result<String, String> {
     }
 }
 
+fn required_identifier(value: &str, field: &str) -> Result<String, String> {
+    if value.trim().is_empty() {
+        Err(format!("{field} must not be empty"))
+    } else {
+        Ok(value.to_string())
+    }
+}
+
 fn map_result(request_id: &str, result: ConfirmResult) -> AskHumanResult {
     AskHumanResult {
         request_id: request_id.to_string(),
@@ -316,7 +332,7 @@ mod tests {
             }
         })
         .await
-        .expect("MCP response timeout")
+        .unwrap_or_else(|_| panic!("MCP response timeout for protocol id {id}"))
     }
 
     async fn initialize(
@@ -337,7 +353,10 @@ mod tests {
             }),
         )
         .await;
-        assert!(read_response(reader, 1).await.get("result").is_some());
+        let response = read_response(reader, 1).await;
+        assert_eq!(response["result"]["protocolVersion"], "2024-11-05");
+        assert_eq!(response["result"]["serverInfo"]["name"], "human-in-loop");
+        assert!(response["result"]["capabilities"].get("tools").is_some());
         send_json(
             writer,
             json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
@@ -374,6 +393,197 @@ mod tests {
             recommended_choice: Some("received".into()),
             request_id: Some("request-1".into()),
         }
+    }
+
+    async fn protocol_session(
+        submitter: TestSubmitter,
+    ) -> (
+        BufReader<tokio::io::ReadHalf<tokio::io::DuplexStream>>,
+        tokio::io::WriteHalf<tokio::io::DuplexStream>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let (server_transport, client_transport) = tokio::io::duplex(64 * 1024);
+        let server_task = tokio::spawn(async move {
+            let server = AskHumanServer::with_submitter(submitter);
+            let shutdown = server.shutdown_token();
+            let (read, write) = tokio::io::split(server_transport);
+            server
+                .serve((super::super::CancelOnEof::new(read, shutdown), write))
+                .await
+                .unwrap()
+                .waiting()
+                .await
+                .unwrap();
+        });
+        let (read, mut write) = tokio::io::split(client_transport);
+        let mut reader = BufReader::new(read);
+        initialize(&mut write, &mut reader).await;
+        (reader, write, server_task)
+    }
+
+    fn call(id: i64, arguments: serde_json::Value) -> serde_json::Value {
+        json!({ "jsonrpc": "2.0", "id": id, "method": "tools/call",
+            "params": { "name": "ask_human", "arguments": arguments } })
+    }
+
+    #[tokio::test]
+    async fn protocol_schema_rejects_invalid_calls_and_recovers_without_submission() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let submitter: TestSubmitter = {
+            let calls = calls.clone();
+            Arc::new(move |task, _cancel| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                assert_eq!(task.spec.presentation.default_action_id(), Some("received"));
+                assert_eq!(task.spec.choices[0].role, ActionRole::Primary);
+                Box::pin(async {
+                    Ok(ConfirmResult {
+                        action_id: "received".into(),
+                        comment: None,
+                        source_channel_id: "feishu".into(),
+                    })
+                })
+            })
+        };
+        let (mut reader, mut write, server_task) = protocol_session(submitter).await;
+        send_json(
+            &mut write,
+            json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }),
+        )
+        .await;
+        let response = read_response(&mut reader, 2).await;
+        let tools = response["result"]["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["name"], "ask_human");
+        let schema = &tools[0]["inputSchema"];
+        let mut properties = schema["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        properties.sort_unstable();
+        assert_eq!(
+            properties,
+            [
+                "choices",
+                "context",
+                "question",
+                "recommended_choice",
+                "repository_path",
+                "request_id",
+                "source_agent"
+            ]
+        );
+        assert_eq!(schema["additionalProperties"], false);
+        let mut required = schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect::<Vec<_>>();
+        required.sort_unstable();
+        assert_eq!(required, ["choices", "question", "source_agent"]);
+        assert_eq!(schema["properties"]["choices"]["minItems"], 2);
+        assert_eq!(schema["properties"]["choices"]["maxItems"], 6);
+        let mut result_keys = tools[0]["outputSchema"]["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        result_keys.sort_unstable();
+        assert_eq!(
+            result_keys,
+            ["request_id", "selected_choice_id", "source_channel_id"]
+        );
+
+        let mut invalid = vec![json!({}), json!("not an object")];
+        for missing in ["source_agent", "question", "choices"] {
+            let mut arguments = valid_arguments();
+            arguments.as_object_mut().unwrap().remove(missing);
+            invalid.push(arguments);
+        }
+        for count in [0, 1, 7] {
+            let mut arguments = valid_arguments();
+            arguments["choices"] = json!((0..count)
+                .map(|i| json!({"id": format!("choice-{i}"), "label": "Choice"}))
+                .collect::<Vec<_>>());
+            invalid.push(arguments);
+        }
+        for forbidden in [
+            "recipient",
+            "phone",
+            "email",
+            "chat_id",
+            "chat_guid",
+            "imsg",
+            "sms",
+            "shell",
+            "read_file",
+            "credential",
+            "project_name",
+        ] {
+            let mut arguments = valid_arguments();
+            arguments[forbidden] = json!("forbidden-runtime-value");
+            invalid.push(arguments);
+        }
+        let mut duplicate = valid_arguments();
+        duplicate["choices"][1]["id"] = json!("received");
+        invalid.push(duplicate);
+        let mut blank_id = valid_arguments();
+        blank_id["choices"][0]["id"] = json!(" \t");
+        invalid.push(blank_id);
+        let mut unknown_choice_field = valid_arguments();
+        unknown_choice_field["choices"][0]["command"] = json!("forbidden-runtime-value");
+        invalid.push(unknown_choice_field);
+        let mut recommendation = valid_arguments();
+        recommendation["recommended_choice"] = json!("missing");
+        invalid.push(recommendation);
+        for (i, arguments) in invalid.into_iter().enumerate() {
+            let id = i as i64 + 10;
+            send_json(&mut write, call(id, arguments)).await;
+            let response = read_response(&mut reader, id).await;
+            assert!(
+                response.get("error").is_some() || response["result"]["isError"] == true,
+                "{response}"
+            );
+            assert!(response.pointer("/result/structuredContent").is_none());
+            assert!(!response.to_string().contains("forbidden-runtime-value"));
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        send_json(&mut write, json!({ "jsonrpc": "2.0", "id": 50, "method": "tools/call", "params": { "name": "shell", "arguments": {} } })).await;
+        assert!(read_response(&mut reader, 50).await.get("error").is_some());
+        send_json(
+            &mut write,
+            json!({ "jsonrpc": "2.0", "id": 51, "method": "unknown/method" }),
+        )
+        .await;
+        assert!(read_response(&mut reader, 51).await.get("error").is_some());
+        write
+            .write_all(b"{malformed json\n{\"jsonrpc\":\"2.0\",\"id\":52,\"method\":7}\n")
+            .await
+            .unwrap();
+        write.flush().await.unwrap();
+        for count in [2, 6] {
+            let mut arguments = valid_arguments();
+            arguments["recommended_choice"] = json!("received");
+            for i in 2..count {
+                arguments["choices"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(json!({"id": format!("choice-{i}"), "label": "Choice"}));
+            }
+            send_json(&mut write, call(60 + count, arguments)).await;
+            assert_eq!(
+                read_response(&mut reader, 60 + count).await["result"]["structuredContent"]
+                    ["selected_choice_id"],
+                "received"
+            );
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        drop(write);
+        drop(reader);
+        server_task.await.unwrap();
     }
 
     #[test]
@@ -445,6 +655,134 @@ mod tests {
         let dir = tempdir().unwrap();
         fs::create_dir(dir.path().join(".git")).unwrap();
         assert!(build_confirm_task(params(Some(dir.path().display().to_string()))).is_err());
+    }
+
+    #[test]
+    fn opaque_ids_are_preserved_and_unknown_transport_fields_are_rejected() {
+        let mut input = params(None);
+        input.choices[0].id = "  stable\tchoice  ".into();
+        input.recommended_choice = Some(input.choices[0].id.clone());
+        input.request_id = Some("  caller\trequest  ".into());
+        let task = build_confirm_task(input).unwrap();
+        assert_eq!(task.spec.choices[0].id, "  stable\tchoice  ");
+        assert_eq!(
+            task.spec.presentation.default_action_id(),
+            Some("  stable\tchoice  ")
+        );
+        assert_eq!(task.request_id.as_deref(), Some("  caller\trequest  "));
+
+        let mut arguments = valid_arguments();
+        arguments["recipient"] = json!("not-runtime-data");
+        assert!(serde_json::from_value::<AskHumanParams>(arguments).is_err());
+        let mut arguments = valid_arguments();
+        arguments["choices"][0]["command"] = json!("not-a-capability");
+        assert!(serde_json::from_value::<AskHumanParams>(arguments).is_err());
+    }
+
+    #[test]
+    fn repository_input_requires_existing_directory_and_canonical_github_origin() {
+        let dir = tempdir().unwrap();
+        assert!(Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(dir.path())
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args([
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/cigit-zgy/human-in-loop.git"
+            ])
+            .current_dir(dir.path())
+            .status()
+            .unwrap()
+            .success());
+        let path = dir.path().join("deleted-directory");
+        assert!(build_confirm_task(params(Some(path.display().to_string()))).is_err());
+        fs::write(&path, "file, not project directory").unwrap();
+        assert!(build_confirm_task(params(Some(path.display().to_string()))).is_err());
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+        let task = build_confirm_task(params(Some(path.display().to_string()))).unwrap();
+        assert_eq!(
+            crate::project::repository_identity(&task.project),
+            crate::project::RepositoryIdentity::Github("human-in-loop".into())
+        );
+        assert!(Command::new("git")
+            .args([
+                "remote",
+                "set-url",
+                "origin",
+                "https://example.invalid/owner/repository.git"
+            ])
+            .current_dir(dir.path())
+            .status()
+            .unwrap()
+            .success());
+        assert!(build_confirm_task(params(Some(path.display().to_string()))).is_err());
+        // The task-local temp directory itself is inside this repository, so use the filesystem
+        // root for the read-only non-repository case rather than pretending nested scratch is one.
+        let filesystem_root = dir.path().ancestors().last().unwrap();
+        assert!(build_confirm_task(params(Some(filesystem_root.display().to_string()))).is_err());
+        #[cfg(unix)]
+        {
+            let link = dir.path().join("outside-repository");
+            std::os::unix::fs::symlink(filesystem_root, &link).unwrap();
+            assert!(build_confirm_task(params(Some(link.display().to_string()))).is_err());
+        }
+        assert!(build_confirm_task(params(Some("\0".into()))).is_err());
+    }
+
+    #[test]
+    fn unicode_and_long_values_preserve_semantics_and_empty_fields_fail() {
+        let mut input = params(None);
+        input.question = "是否\n\t收到确认？".into();
+        input.context = Some("当前  决策上下文 🧪".into());
+        input.choices[0] = choice("已收到", "已收到 ✓");
+        input.recommended_choice = Some("已收到".into());
+        input.request_id = None;
+        let task = build_confirm_task(input).unwrap();
+        assert_eq!(task.spec.title, "是否 收到确认？");
+        assert_eq!(task.spec.context[0].value, "当前 决策上下文 🧪");
+        assert_eq!(task.spec.choices[0].id, "已收到");
+        assert_eq!(task.spec.choices[0].label, "已收到 ✓");
+        assert!(uuid::Uuid::parse_str(task.request_id.as_deref().unwrap()).is_ok());
+
+        let mut input = params(None);
+        input.question = "valid ".repeat(200);
+        input.context = Some("context ".repeat(200));
+        input.choices[0].label = "label ".repeat(200);
+        let task = build_confirm_task(input).unwrap();
+        let request = task.spec.into_request("long-input".into(), 1, 2).unwrap();
+        assert!(crate::channels::imessage::render_confirmation(
+            &request,
+            "7F32",
+            &task.source,
+            None
+        )
+        .is_err());
+        for field in [
+            "source_agent",
+            "question",
+            "context",
+            "request_id",
+            "id",
+            "label",
+        ] {
+            let mut input = params(None);
+            match field {
+                "source_agent" => input.source_agent = " \t\n".into(),
+                "question" => input.question = " \t\n".into(),
+                "context" => input.context = Some(" \t\n".into()),
+                "request_id" => input.request_id = Some(" \t\n".into()),
+                "id" => input.choices[0].id = " \t\n".into(),
+                "label" => input.choices[0].label = " \t\n".into(),
+                _ => unreachable!(),
+            }
+            assert!(build_confirm_task(input).is_err(), "{field}");
+        }
     }
 
     #[test]
@@ -631,6 +969,146 @@ mod tests {
         drop(write);
         drop(reader);
         server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn protocol_coordinator_failures_cancellation_races_and_disconnect_are_isolated() {
+        use crate::app::confirm_coordinator::ConfirmOutcome;
+        use crate::client::ConfirmClientError;
+        use crate::models::ConfirmFallbackReason;
+
+        let registry = Arc::new(crate::daemon::request::RequestRegistry::new());
+        let (entry_tx, mut entries) = tokio::sync::mpsc::unbounded_channel();
+        let submitter: TestSubmitter = {
+            let registry = registry.clone();
+            Arc::new(move |task, cancel| {
+                let registry = registry.clone();
+                let entry_tx = entry_tx.clone();
+                Box::pin(async move {
+                    let (entry, mut rx) = registry.create_confirm(task, None).unwrap();
+                    entry_tx.send(entry.clone()).unwrap();
+                    let outcome = tokio::select! {
+                        _ = cancel.cancelled() => {
+                            assert!(entry.coordinator.cancel());
+                            entry.cancel.notify_waiters();
+                            Err(ConfirmClientError::Cancelled)
+                        }
+                        result = rx.recv() => match result.unwrap() {
+                            ConfirmOutcome::Final(answer) => Ok(answer),
+                            ConfirmOutcome::Fallback(reason) => Err(ConfirmClientError::Fallback(reason)),
+                        }
+                    };
+                    registry.remove_confirm(&entry.request_id);
+                    outcome
+                })
+            })
+        };
+        let (mut reader, mut write, server_task) = protocol_session(submitter).await;
+        // A channel failure and an expiry both return errors without poisoning later calls.
+        for (id, reason) in [
+            (2, ConfirmFallbackReason::NoAvailableChannel),
+            (3, ConfirmFallbackReason::Expired),
+        ] {
+            let mut arguments = valid_arguments();
+            arguments["request_id"] = json!(format!("request-{id}"));
+            send_json(&mut write, call(id, arguments)).await;
+            let entry = entries.recv().await.unwrap();
+            assert!(entry.coordinator.fallback(reason));
+            let response = read_response(&mut reader, id).await;
+            assert!(response.get("error").is_some());
+            assert!(response.pointer("/result/structuredContent").is_none());
+            assert!(!entry.coordinator.submit_wire(0, None, "imessage").unwrap());
+            assert_eq!(registry.active_count(), 0);
+        }
+        let mut pending = Vec::new();
+        for id in [4, 5] {
+            let mut arguments = valid_arguments();
+            arguments["request_id"] = json!(format!("request-{id}"));
+            send_json(&mut write, call(id, arguments)).await;
+            pending.push(entries.recv().await.unwrap());
+        }
+        assert_ne!(pending[0].token, pending[1].token);
+        assert_eq!(registry.active_count(), 2);
+        send_json(&mut write, json!({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": 4}})).await;
+        // MCP cancellation suppresses the cancelled response rather than returning a choice.
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while registry.active_count() != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        send_json(
+            &mut write,
+            json!({"jsonrpc": "2.0", "id": 45, "method": "tools/list"}),
+        )
+        .await;
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                let mut line = String::new();
+                assert!(reader.read_line(&mut line).await.unwrap() > 0);
+                let response: serde_json::Value = serde_json::from_str(&line).unwrap();
+                assert_ne!(response.get("id"), Some(&json!(4)));
+                if response.get("id") == Some(&json!(45)) {
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(registry.active_count(), 1);
+        assert!(!pending[0]
+            .coordinator
+            .submit_wire(0, None, "imessage")
+            .unwrap());
+        assert!(!pending[1].coordinator.is_terminal());
+
+        // Multiple channel candidates compete at the existing coordinator's atomic terminal gate.
+        let barrier = Arc::new(tokio::sync::Barrier::new(8));
+        let mut candidates = Vec::new();
+        for _ in 0..8 {
+            let barrier = barrier.clone();
+            let coordinator = pending[1].coordinator.clone();
+            candidates.push(tokio::spawn(async move {
+                barrier.wait().await;
+                coordinator.submit_wire(0, None, "imessage").unwrap()
+            }));
+        }
+        let mut winners = 0;
+        for candidate in candidates {
+            winners += usize::from(candidate.await.unwrap());
+        }
+        assert_eq!(winners, 1);
+        assert_eq!(
+            read_response(&mut reader, 5).await["result"]["structuredContent"],
+            json!({"request_id": "request-5", "selected_choice_id": "received", "source_channel_id": "imessage"})
+        );
+        assert_eq!(registry.active_count(), 0);
+        assert!(!pending[1]
+            .coordinator
+            .submit_wire(1, None, "feishu")
+            .unwrap());
+
+        // EOF must reach every pending canonical request, not just the most recent one.
+        let mut disconnected = Vec::new();
+        for id in [6, 7] {
+            let mut arguments = valid_arguments();
+            arguments["request_id"] = json!(format!("request-{id}"));
+            send_json(&mut write, call(id, arguments)).await;
+            disconnected.push(entries.recv().await.unwrap());
+        }
+        drop(write);
+        drop(reader);
+        tokio::time::timeout(std::time::Duration::from_secs(2), server_task)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(registry.active_count(), 0);
+        for entry in disconnected {
+            assert!(entry.coordinator.is_terminal());
+            assert!(!entry.coordinator.submit_wire(0, None, "imessage").unwrap());
+            assert!(entry.coordinator.winner_channel_id().is_none());
+        }
     }
 
     #[tokio::test]
