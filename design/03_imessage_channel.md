@@ -4,7 +4,9 @@ title: Apple Messages channel (iMessage only)
 status: active
 role: design_authority
 summary: >
-  Defines a free iMessage-only channel backed by the external openclaw/imsg CLI, with explicit no-SMS fail-closed behavior.
+  Defines a free iMessage-only channel backed by the external openclaw/imsg CLI,
+  including distinct-peer and same-Apple-Account operation with strict request
+  correlation and explicit no-SMS fail-closed behavior.
 operational_projection:
   - src-tauri/src/channels/imessage.rs
   - src-tauri/src/commands/
@@ -14,6 +16,17 @@ operational_projection:
 # Purpose
 
 Deliver bounded AskHuman confirmations to the user's iPhone through Apple's iMessage service using the Mac's existing Messages.app account, then watch the same conversation for a strictly correlated option reply.
+
+The supported topology includes both:
+
+```text
+distinct_peer
+same_account
+```
+
+`same_account` means the Mac and iPhone use the same Apple Account / iMessage identity. This is a first-class supported topology; a second Apple Account is not required.
+
+The channel does not claim device-level provenance. In `same_account` mode, the trust decision is that a new message in the configured user-controlled iMessage conversation satisfies the strict post-send request-correlation contract. The public Messages database does not provide a reliable basis for asserting that a correlated message physically originated on the iPhone rather than another trusted device on the same Apple Account.
 
 # Dependency boundary
 
@@ -25,7 +38,7 @@ openclaw/imsg
 
 The application invokes documented `imsg` interfaces. `imsg` source is not vendored or copied.
 
-Initial integration favors the smallest reliable public path:
+Use the smallest reliable public path:
 
 ```text
 finite commands: imsg chats / history / send --json where applicable
@@ -34,17 +47,22 @@ long-lived receive: imsg watch --chat-id <id> --json
 
 Do not use Advanced IMCore, SIP disabling, private framework injection, typing/read-receipt features, or other advanced bridge features.
 
-# Setup
+# Configuration and identity mode
 
-The user configures one existing direct iMessage conversation/recipient. Setup resolves and stores enough identity to validate both directions:
+One iMessage destination is configured locally with:
 
 ```text
-recipient handle (E.164 phone number or iMessage email)
-resolved direct chat id/guid
-observed service = iMessage
+recipient handle: E.164 phone number or iMessage email
+identity mode: distinct_peer | same_account
+resolved direct chat id/guid when available
+observed service = iMessage when available
 ```
 
-The initial implementation may require the conversation to already exist in Messages.app rather than creating new chats automatically.
+The recipient is private runtime configuration. It must not be committed into repository source, fixtures, examples, reports, screenshots, or logs.
+
+For an already existing direct conversation, setup resolves and stores the direct chat identity before normal operation.
+
+For `same_account`, the recipient may be one of the user's own iMessage handles. The absence of an existing direct conversation is not itself an error. First use may bootstrap that direct conversation under the bounded rules below.
 
 Required macOS permissions are those documented by `imsg` for the used features:
 
@@ -52,6 +70,38 @@ Required macOS permissions are those documented by `imsg` for the used features:
 Full Disk Access      read/watch Messages database
 Automation → Messages send through Messages.app
 ```
+
+# First-use bootstrap
+
+When no deterministic existing direct iMessage chat can be resolved, the channel may bootstrap only if all are true:
+
+```text
+recipient was explicitly configured/approved by the user
+AND identity mode is known
+AND imsg is available
+AND required local database access is available
+AND the canonical request is supported by the iMessage renderer
+```
+
+Bootstrap is not a separate probe message. The first real structured confirmation is sent directly to the configured handle using the same production mutation path:
+
+```text
+imsg send --to <handle> --service imessage --no-sms-fallback ...
+```
+
+Before dispatch, create the normal request token and establish a pre-send database/cursor boundary. After a successful iMessage mutation, resolve the resulting direct conversation and the actual outgoing request row from documented local data. Publish/persist the chat identity only when resolution is deterministic and the service is iMessage.
+
+The post-bootstrap state must establish enough request evidence for correlation, including where available:
+
+```text
+chat_id / chat_guid
+sent message row id
+sent message guid
+request token
+send-time/cursor boundary
+```
+
+If the mutation is reported as not started, the target cannot be used as iMessage, the resulting chat cannot be uniquely resolved, or service identity is inconsistent, fail closed. An uncertain mutation outcome must not be blindly retried.
 
 # Absolute no-carrier invariant
 
@@ -61,7 +111,7 @@ Every direct send uses explicit iMessage selection:
 imsg send --to <handle> --service imessage --no-sms-fallback ...
 ```
 
-`--no-sms-fallback` is retained as defense in depth even though explicit `--service imessage` already disables fallback in the inspected `imsg` behavior.
+`--no-sms-fallback` is retained as defense in depth even though explicit `--service imessage` disables fallback in the inspected `imsg` behavior.
 
 The implementation MUST NOT invoke:
 
@@ -82,33 +132,53 @@ If `imsg` reports that the handle is not available via iMessage, the channel bec
 
 For each supported request:
 
-1. Validate configuration and `imsg` availability/version.
-2. Validate that the resolved direct chat still represents the configured peer and iMessage service as far as documented local data permits.
-3. Render the bounded structured text.
-4. If one admitted decision image exists, stage/send it through `imsg --file`; otherwise send text only.
-5. Use explicit iMessage service selection for every direct send.
-6. Treat uncertain send outcomes according to `imsg`'s reported disposition; do not blindly retry a mutation with an uncertain outcome.
+1. Validate configuration, identity mode, and `imsg` availability/version.
+2. If a resolved direct chat exists, validate that it still represents the configured destination and iMessage service as far as documented local data permits.
+3. Render the bounded structured text and allocate the collision-safe request token before mutation.
+4. Establish a pre-send cursor/time boundary.
+5. If one admitted decision image exists, stage/send it through the permitted iMessage file path; otherwise send text only.
+6. Use explicit iMessage service selection for every direct send.
+7. Confirm or resolve the actual outgoing request row/chat after send when local database evidence is available.
+8. Treat uncertain send outcomes according to `imsg`'s reported disposition; do not blindly retry a mutation with an uncertain outcome.
 
 # Receive semantics
 
-Maintain one watcher scoped to the configured direct chat while iMessage channel operation requires inbound answers:
+Maintain one watcher scoped to the resolved direct chat while iMessage channel operation requires an answer:
 
 ```text
 imsg watch --chat-id <id> --json
 ```
 
-For each inbound candidate:
+The watcher must begin from a post-send boundary that prevents the outgoing request row and older history from being accepted as a reply. History/cursor recovery may be used so that a fast reply occurring between send confirmation and watcher startup is not lost.
+
+For all modes, an answer candidate must satisfy:
 
 ```text
-must be incoming (not from self)
-AND from configured direct chat
-AND text matches exact reply grammar
-AND token maps to an active request
+same configured direct chat
+AND message is strictly after the request send/cursor boundary
+AND message guid differs from the sent request guid when both are available
+AND text exactly matches <TOKEN> <OPTION_NUMBER>
+AND token maps to exactly one active request
 AND option number is valid
-→ accept candidate
+AND request has not terminated
+AND message is not a reaction-only or attachment/image-only answer
 ```
 
-Other chat traffic, reactions, images, malformed answers, stale tokens, and late answers are ignored for terminal resolution.
+If `reply_to_guid` is present on the candidate, it must equal the sent request message guid. An inline reply therefore provides additional correlation evidence but is not mandatory for normal use.
+
+Mode-specific authorship rule:
+
+```text
+distinct_peer:
+  is_from_me must be false
+
+same_account:
+  is_from_me may be true or false and is not used as the decisive human/device identity test
+```
+
+In `same_account` mode, accepting `is_from_me=true` is safe only because the complete strict post-send correlation contract above remains mandatory. Do not weaken the token, chat, cursor, request-state, reaction/attachment, or option checks to compensate for same-account synchronization.
+
+Other chat traffic, malformed answers, stale tokens, wrong-chat messages, pre-send history, duplicate/late replies, reactions, and images are ignored for terminal resolution. Exactly one terminal answer may win.
 
 # Image behavior
 
@@ -125,14 +195,30 @@ not_configured
 imsg_missing
 permission_missing
 messages_unavailable
+bootstrap_required
 recipient_not_imessage
 watch_failed
 send_failed
 ready
 ```
 
+`bootstrap_required` means a user-approved recipient and identity mode are configured but no deterministic direct chat exists yet. It is a valid first-use state, not authorization to use another transport.
+
 Do not collapse `recipient_not_imessage` into a generic network failure because it is a hard safety boundary.
 
 # Design acceptance
 
-The iMessage channel is conforming only when static review and real macOS E2E evidence show there is no reachable code path from an AskHuman request to SMS/carrier delivery, send/watch are scoped to the configured peer, correlation rejects ambiguous replies, and a non-iMessage recipient fails closed.
+The iMessage channel is conforming only when static review and real macOS E2E evidence show:
+
+```text
+no reachable SMS/carrier delivery path
+first-use bootstrap remains explicit iMessage-only and fail-closed
+resolved send/watch remain scoped to one configured direct conversation
+strict post-send correlation rejects ambiguous/stale/wrong-chat replies
+same_account works without requiring a second Apple Account
+self-authored synchronization cannot make the outgoing request itself resolve as an answer
+exactly one terminal answer is accepted
+watcher processes are terminated/reaped on every terminal path
+```
+
+A non-iMessage recipient must fail closed without intentionally sending an SMS/MMS/RCS negative test.
