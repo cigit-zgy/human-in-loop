@@ -491,10 +491,13 @@ export default {
         "调用外部 imsg CLI，并始终关闭 SMS 回退；只投递有界的结构化确认。",
       imessageRecipient: "已验证的收件人 handle",
       imessageRecipientPlaceholder: "+8613800000000 或 name@example.com",
+      imessageIdentityMode: "回复身份模式",
+      imessageDistinctPeer: "不同对端",
+      imessageSameAccount: "同一 Apple 账户",
       imessageChatId: "单聊 Chat ID",
       imessageChatGuid: "单聊 Chat GUID",
       imessageSetupHint:
-        "请从 `imsg chats --json` 选择一个已存在的 iMessage 单聊。每次发送前都会重新核验保存的 ID、GUID、对端和 iMessage 服务。",
+        "如已有单聊则复用；否则第一条结构化确认会通过显式的纯 iMessage 发送自动建立单聊。",
     },
     history: {
       title: "回复历史",

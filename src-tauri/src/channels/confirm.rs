@@ -587,12 +587,14 @@ pub fn start_imessage(entry: Arc<ConfirmEntry>, config: crate::config::IMessageC
         use crate::channels::imessage::{self, HealthState};
 
         let channel = "imessage";
-        let health = imessage::health(&config).await;
-        if health != HealthState::Ready {
-            crate::channels::health::report(channel, health.as_str());
-            fail(&entry, channel, health.as_str());
-            return;
-        }
+        let readiness = match imessage::prepare(&config).await {
+            Ok(readiness) => readiness,
+            Err(health) => {
+                crate::channels::health::report(channel, health.as_str());
+                fail(&entry, channel, health.as_str());
+                return;
+            }
+        };
 
         let token = imessage_tokens()
             .lock()
@@ -625,9 +627,8 @@ pub fn start_imessage(entry: Arc<ConfirmEntry>, config: crate::config::IMessageC
             },
             None => None,
         };
-        let chat_id = config.chat_id.expect("health checked configured chat id");
-        let (mut child, mut reader) = match imessage::spawn_watch(chat_id) {
-            Ok(watch) => watch,
+        let pre_send = match imessage::pre_send_boundary(&readiness).await {
+            Ok(boundary) => boundary,
             Err(health) => {
                 crate::channels::health::report(channel, health.as_str());
                 release_imessage_token(&token, &entry.request_id);
@@ -635,18 +636,49 @@ pub fn start_imessage(entry: Arc<ConfirmEntry>, config: crate::config::IMessageC
                 return;
             }
         };
-        let message_id = match imessage::send(&config, &rendered.text, image.as_deref()).await {
-            Ok(message_id) => message_id,
+        let receipt = match imessage::send(&config, &rendered.text, image.as_deref()).await {
+            Ok(receipt) => receipt,
             Err(health) => {
                 crate::channels::health::report(channel, health.as_str());
-                let _ = child.kill().await;
-                let _ = child.wait().await;
                 release_imessage_token(&token, &entry.request_id);
                 fail(&entry, channel, health.as_str());
                 return;
             }
         };
-        if !entry.mark_ready(channel, message_id) {
+        let resolved = match imessage::resolve_after_send(
+            &config,
+            &readiness,
+            &pre_send,
+            &receipt,
+            &rendered.text,
+        )
+        .await
+        {
+            Ok(resolved) => resolved,
+            Err(health) => {
+                crate::channels::health::report(channel, health.as_str());
+                release_imessage_token(&token, &entry.request_id);
+                fail(&entry, channel, health.as_str());
+                return;
+            }
+        };
+        if let Err(health) = imessage::persist_resolved_chat(&config, &resolved) {
+            crate::channels::health::report(channel, health.as_str());
+            release_imessage_token(&token, &entry.request_id);
+            fail(&entry, channel, health.as_str());
+            return;
+        }
+        let (mut child, mut reader) =
+            match imessage::spawn_watch(resolved.chat.id, resolved.sent.row_id) {
+                Ok(watch) => watch,
+                Err(health) => {
+                    crate::channels::health::report(channel, health.as_str());
+                    release_imessage_token(&token, &entry.request_id);
+                    fail(&entry, channel, health.as_str());
+                    return;
+                }
+            };
+        if !entry.mark_ready(channel, resolved.sent.guid.clone()) {
             let _ = child.kill().await;
             let _ = child.wait().await;
             release_imessage_token(&token, &entry.request_id);
@@ -658,7 +690,12 @@ pub fn start_imessage(entry: Arc<ConfirmEntry>, config: crate::config::IMessageC
         pending.register(
             &token,
             &entry.request_id,
-            chat_id,
+            imessage::RequestBoundary {
+                identity_mode: config.identity_mode,
+                chat_id: resolved.chat.id,
+                sent_row_id: resolved.sent.row_id,
+                sent_guid: resolved.sent.guid,
+            },
             rendered.choice_indices,
             entry.request.expires_at_ms,
         );
@@ -1041,6 +1078,8 @@ pub fn start_telegram(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::confirm_coordinator::ConfirmOutcome;
+    use crate::config::{IMessageChannelConfig, IMessageIdentityMode};
     use crate::models::{
         ConfirmChoice, ConfirmDetail, ConfirmField, ConfirmFieldKind, ConfirmInput,
         ConfirmPresentation, ConfirmSpec,
@@ -1224,5 +1263,75 @@ mod tests {
         assert!(options[1]["md"].as_str().unwrap().contains("【TODO】"));
         assert!(!options[1]["md"].as_str().unwrap().contains("Run todo:"));
         assert!(!todo_payload["options"].as_str().unwrap().contains("Cancel"));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires an approved private recipient and a real same-account iPhone reply"]
+    async fn live_same_account_imessage_round_trip() {
+        let recipient = std::env::var("ASKHUMAN_IMESSAGE_E2E_RECIPIENT")
+            .expect("ASKHUMAN_IMESSAGE_E2E_RECIPIENT must be set");
+        let spec = ConfirmSpec {
+            title: "Human-in-loop iMessage E2E test".into(),
+            context: vec![],
+            detail: ConfirmDetail {
+                summary: "Confirm that this iMessage test was received correctly.".into(),
+                body_md: String::new(),
+            },
+            choices: vec![
+                ConfirmChoice {
+                    id: "received_correctly".into(),
+                    label: "Received correctly".into(),
+                    description: String::new(),
+                    role: crate::confirm::ActionRole::Primary,
+                    variant: None,
+                },
+                ConfirmChoice {
+                    id: "test_failed".into(),
+                    label: "Test failed".into(),
+                    description: String::new(),
+                    role: crate::confirm::ActionRole::Destructive,
+                    variant: None,
+                },
+            ],
+            presentation: ConfirmPresentation::SingleSelectSubmit {
+                input: None,
+                submit_label: "Submit".into(),
+                default_action_id: Some("received_correctly".into()),
+            },
+            dismiss_action_id: "test_failed".into(),
+            decision_image: None,
+        };
+        let (entry, mut outcome) = crate::daemon::request::create_internal_confirm(
+            spec,
+            "imessage",
+            "en",
+            env!("CARGO_MANIFEST_DIR"),
+            "codex",
+            Duration::from_secs(10 * 60),
+        )
+        .expect("valid canonical confirmation");
+        start_imessage(
+            entry,
+            IMessageChannelConfig {
+                enabled: true,
+                recipient,
+                identity_mode: IMessageIdentityMode::SameAccount,
+                chat_id: None,
+                chat_guid: String::new(),
+            },
+        );
+
+        let terminal = tokio::time::timeout(Duration::from_secs(10 * 60), outcome.recv())
+            .await
+            .expect("real iMessage round trip timed out")
+            .expect("confirmation outcome channel closed");
+        match terminal {
+            ConfirmOutcome::Final(result) => {
+                assert_eq!(result.action_id, "received_correctly");
+                assert_eq!(result.source_channel_id, "imessage");
+                assert_eq!(result.comment, None);
+            }
+            ConfirmOutcome::Fallback(reason) => panic!("iMessage fallback: {reason:?}"),
+        }
     }
 }

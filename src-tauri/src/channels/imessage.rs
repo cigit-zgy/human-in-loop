@@ -1,7 +1,8 @@
 //! Bounded structured confirmations over the external `imsg` CLI.
 
-use crate::config::IMessageChannelConfig;
+use crate::config::{AppConfig, IMessageChannelConfig, IMessageIdentityMode};
 use crate::models::ConfirmRequest;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -23,6 +24,10 @@ pub const MAX_CHOICES: usize = 6;
 pub const MAX_CHOICE_LABEL_CHARS: usize = 80;
 pub const MAX_RENDERED_CHARS: usize = 1_200;
 pub const MAX_IMAGE_BYTES: u64 = 5 * 1024 * 1024;
+const SUPPORTED_IMSG_VERSION: &str = "0.15.1";
+const CHAT_SCAN_LIMIT: usize = 10_000;
+const CHAT_SCAN_TIMEOUT: Duration = Duration::from_secs(90);
+const POST_SEND_CHAT_LIMIT: usize = 20;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnsupportedReason {
@@ -159,20 +164,21 @@ pub fn direct_send_args(recipient: &str, text: &str, image: Option<&Path>) -> Ve
     args
 }
 
-pub fn watch_args(chat_id: i64) -> Vec<String> {
+pub fn watch_args(chat_id: i64, since_row_id: i64) -> Vec<String> {
     vec![
         "watch".into(),
         "--chat-id".into(),
         chat_id.to_string(),
+        "--since-rowid".into(),
+        since_row_id.to_string(),
         "--json".into(),
     ]
 }
 
 pub fn parse_reply(text: &str) -> Option<(String, usize)> {
-    let mut fields = text.split_whitespace();
-    let token = fields.next()?;
-    let option = fields.next()?;
-    if fields.next().is_some()
+    let (token, option) = text.split_once(' ')?;
+    if option.is_empty()
+        || option.contains(char::is_whitespace)
         || token.len() < MIN_TOKEN_CHARS
         || token.len() > 64
         || !token
@@ -187,7 +193,14 @@ pub fn parse_reply(text: &str) -> Option<(String, usize)> {
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct InboundMessage {
+    pub id: i64,
     pub chat_id: i64,
+    #[serde(default)]
+    pub guid: String,
+    #[serde(default)]
+    pub reply_to_guid: Option<String>,
+    #[serde(default)]
+    pub created_at: String,
     pub is_from_me: bool,
     pub text: Option<String>,
     #[serde(default)]
@@ -216,7 +229,7 @@ pub struct CorrelatedReply {
 
 struct PendingReply {
     request_id: String,
-    chat_id: i64,
+    boundary: RequestBoundary,
     choice_indices: Vec<usize>,
     expires_at_ms: u64,
     terminal: bool,
@@ -227,12 +240,20 @@ pub struct PendingReplies {
     by_token: HashMap<String, PendingReply>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequestBoundary {
+    pub identity_mode: IMessageIdentityMode,
+    pub chat_id: i64,
+    pub sent_row_id: i64,
+    pub sent_guid: String,
+}
+
 impl PendingReplies {
     pub fn register(
         &mut self,
         token: &str,
         request_id: &str,
-        chat_id: i64,
+        boundary: RequestBoundary,
         choice_indices: Vec<usize>,
         expires_at_ms: u64,
     ) {
@@ -240,7 +261,7 @@ impl PendingReplies {
             token.to_string(),
             PendingReply {
                 request_id: request_id.to_string(),
-                chat_id,
+                boundary,
                 choice_indices,
                 expires_at_ms,
                 terminal: false,
@@ -249,12 +270,23 @@ impl PendingReplies {
     }
 
     pub fn resolve(&mut self, message: &InboundMessage, now_ms: u64) -> Option<CorrelatedReply> {
-        if message.is_from_me || message.is_reaction || message.has_attachments {
+        if message.is_reaction || message.has_attachments {
             return None;
         }
         let (token, option) = parse_reply(message.text.as_deref()?)?;
         let pending = self.by_token.get_mut(&token)?;
-        if pending.terminal || now_ms > pending.expires_at_ms || message.chat_id != pending.chat_id
+        if pending.terminal
+            || now_ms > pending.expires_at_ms
+            || message.chat_id != pending.boundary.chat_id
+            || message.id <= pending.boundary.sent_row_id
+            || (pending.boundary.identity_mode == IMessageIdentityMode::DistinctPeer
+                && message.is_from_me)
+            || (!message.guid.is_empty()
+                && !pending.boundary.sent_guid.is_empty()
+                && message.guid == pending.boundary.sent_guid)
+            || message.reply_to_guid.as_deref().is_some_and(|guid| {
+                pending.boundary.sent_guid.is_empty() || guid != pending.boundary.sent_guid
+            })
         {
             return None;
         }
@@ -338,7 +370,10 @@ pub enum HealthState {
     ImsgMissing,
     PermissionMissing,
     MessagesUnavailable,
+    ImsgIncompatible,
+    BootstrapRequired,
     RecipientNotImessage,
+    AmbiguousChat,
     WatchFailed,
     SendFailed,
     Ready,
@@ -351,7 +386,10 @@ impl HealthState {
             Self::ImsgMissing => "imsg_missing",
             Self::PermissionMissing => "permission_missing",
             Self::MessagesUnavailable => "messages_unavailable",
+            Self::ImsgIncompatible => "imsg_incompatible",
+            Self::BootstrapRequired => "bootstrap_required",
             Self::RecipientNotImessage => "recipient_not_imessage",
+            Self::AmbiguousChat => "ambiguous_chat",
             Self::WatchFailed => "watch_failed",
             Self::SendFailed => "send_failed",
             Self::Ready => "ready",
@@ -359,7 +397,7 @@ impl HealthState {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 struct ChatRecord {
     id: i64,
     guid: Option<String>,
@@ -371,26 +409,130 @@ struct ChatRecord {
 }
 
 fn configured(config: &IMessageChannelConfig) -> bool {
-    config.enabled
-        && !config.recipient.trim().is_empty()
-        && config.chat_id.is_some()
-        && !config.chat_guid.trim().is_empty()
+    config.enabled && !config.recipient.trim().is_empty()
 }
 
 fn verified_direct_chat(config: &IMessageChannelConfig, chat: &ChatRecord) -> bool {
     chat.id == config.chat_id.unwrap_or_default()
         && chat.guid.as_deref() == Some(config.chat_guid.trim())
         && !chat.is_group
+        && chat.service.eq_ignore_ascii_case("imessage")
+        && valid_participants(config, chat)
+}
+
+fn matches_recipient(config: &IMessageChannelConfig, chat: &ChatRecord) -> bool {
+    !chat.is_group
         && chat.participants.len() == 1
         && chat.participants[0] == config.recipient.trim()
         && chat.service.eq_ignore_ascii_case("imessage")
+        && chat.guid.as_deref().is_some_and(|guid| !guid.is_empty())
 }
 
-/// Check the documented external CLI and verify that the stored conversation remains a direct
-/// iMessage chat with the configured peer. Human-oriented output is never parsed.
-pub async fn health(config: &IMessageChannelConfig) -> HealthState {
+fn valid_participants(config: &IMessageChannelConfig, chat: &ChatRecord) -> bool {
+    match config.identity_mode {
+        IMessageIdentityMode::DistinctPeer => {
+            chat.participants.len() == 1 && chat.participants[0] == config.recipient.trim()
+        }
+        IMessageIdentityMode::SameAccount => {
+            chat.participants.is_empty()
+                || (chat.participants.len() == 1 && chat.participants[0] == config.recipient.trim())
+        }
+    }
+}
+
+fn post_send_chat_matches(config: &IMessageChannelConfig, chat: &ChatRecord) -> bool {
+    !chat.is_group
+        && chat.service.eq_ignore_ascii_case("imessage")
+        && chat.guid.as_deref().is_some_and(|guid| !guid.is_empty())
+        && valid_participants(config, chat)
+}
+
+fn parse_ndjson<T: DeserializeOwned>(stdout: &[u8]) -> Result<Vec<T>, HealthState> {
+    let text = std::str::from_utf8(stdout).map_err(|_| HealthState::MessagesUnavailable)?;
+    text.lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).map_err(|_| HealthState::MessagesUnavailable))
+        .collect()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatIdentity {
+    pub id: i64,
+    pub guid: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Readiness {
+    Ready(ChatIdentity),
+    BootstrapRequired,
+}
+
+fn readiness_from_chats(
+    config: &IMessageChannelConfig,
+    chats: &[ChatRecord],
+) -> Result<Readiness, HealthState> {
+    match (config.chat_id, config.chat_guid.trim().is_empty()) {
+        (Some(_), false) => chats
+            .iter()
+            .find(|chat| verified_direct_chat(config, chat))
+            .map(|chat| {
+                Readiness::Ready(ChatIdentity {
+                    id: chat.id,
+                    guid: chat.guid.clone().unwrap_or_default(),
+                })
+            })
+            .ok_or(HealthState::RecipientNotImessage),
+        (None, true) => {
+            let matches: Vec<_> = chats
+                .iter()
+                .filter(|chat| matches_recipient(config, chat))
+                .collect();
+            match matches.as_slice() {
+                [] => Ok(Readiness::BootstrapRequired),
+                [chat] => Ok(Readiness::Ready(ChatIdentity {
+                    id: chat.id,
+                    guid: chat.guid.clone().unwrap_or_default(),
+                })),
+                _ => Err(HealthState::AmbiguousChat),
+            }
+        }
+        _ => Err(HealthState::NotConfigured),
+    }
+}
+
+async fn list_chats(limit: usize, deadline: Duration) -> Result<Vec<ChatRecord>, HealthState> {
+    let output = timeout(
+        deadline,
+        Command::new("imsg")
+            .args(["chats", "--limit", &limit.to_string(), "--json"])
+            .output(),
+    )
+    .await
+    .map_err(|_| HealthState::MessagesUnavailable)?
+    .map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            HealthState::ImsgMissing
+        } else {
+            HealthState::MessagesUnavailable
+        }
+    })?;
+    if !output.status.success() {
+        return Err(
+            match classify_failure(
+                output.status.code(),
+                &String::from_utf8_lossy(&output.stderr),
+            ) {
+                HealthState::SendFailed => HealthState::MessagesUnavailable,
+                other => other,
+            },
+        );
+    }
+    parse_ndjson(&output.stdout)
+}
+
+pub async fn prepare(config: &IMessageChannelConfig) -> Result<Readiness, HealthState> {
     if !configured(config) {
-        return HealthState::NotConfigured;
+        return Err(HealthState::NotConfigured);
     }
     let version = timeout(
         Duration::from_secs(5),
@@ -398,58 +540,60 @@ pub async fn health(config: &IMessageChannelConfig) -> HealthState {
     )
     .await;
     match version {
-        Ok(Ok(output)) if output.status.success() => {}
+        Ok(Ok(output)) if output.status.success() && compatible_version(&output.stdout) => {}
+        Ok(Ok(output)) if output.status.success() => {
+            return Err(HealthState::ImsgIncompatible);
+        }
         Ok(Ok(output)) => {
-            return classify_failure(
+            return Err(classify_failure(
                 output.status.code(),
                 &String::from_utf8_lossy(&output.stderr),
-            );
+            ));
         }
         Ok(Err(error)) if error.kind() == std::io::ErrorKind::NotFound => {
-            return HealthState::ImsgMissing;
+            return Err(HealthState::ImsgMissing);
         }
-        Ok(Err(_)) | Err(_) => return HealthState::ImsgMissing,
+        Ok(Err(_)) | Err(_) => return Err(HealthState::ImsgMissing),
     }
-
-    let output = match timeout(
-        Duration::from_secs(10),
-        Command::new("imsg")
-            .args(["chats", "--limit", "1000", "--json"])
-            .output(),
+    readiness_from_chats(
+        config,
+        &list_chats(CHAT_SCAN_LIMIT, CHAT_SCAN_TIMEOUT).await?,
     )
-    .await
-    {
-        Ok(Ok(output)) => output,
-        Ok(Err(error)) if error.kind() == std::io::ErrorKind::NotFound => {
-            return HealthState::ImsgMissing;
-        }
-        Ok(Err(_)) | Err(_) => return HealthState::MessagesUnavailable,
-    };
-    if !output.status.success() {
-        let classified = classify_failure(
-            output.status.code(),
-            &String::from_utf8_lossy(&output.stderr),
-        );
-        return match classified {
-            HealthState::SendFailed => HealthState::MessagesUnavailable,
-            other => other,
-        };
+}
+
+fn compatible_version(stdout: &[u8]) -> bool {
+    String::from_utf8_lossy(stdout).trim() == SUPPORTED_IMSG_VERSION
+}
+
+/// Check the documented external CLI and verify that the stored conversation remains a direct
+/// iMessage chat with the configured peer. Human-oriented output is never parsed.
+pub async fn health(config: &IMessageChannelConfig) -> HealthState {
+    match prepare(config).await {
+        Ok(Readiness::Ready(_)) => HealthState::Ready,
+        Ok(Readiness::BootstrapRequired) => HealthState::BootstrapRequired,
+        Err(state) => state,
     }
-    let wanted_id = config.chat_id.expect("configured chat id");
-    for line in String::from_utf8_lossy(&output.stdout).lines() {
-        let Ok(chat) = serde_json::from_str::<ChatRecord>(line) else {
-            continue;
-        };
-        if chat.id != wanted_id {
-            continue;
-        }
-        return if verified_direct_chat(config, &chat) {
-            HealthState::Ready
-        } else {
-            HealthState::RecipientNotImessage
-        };
-    }
-    HealthState::RecipientNotImessage
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SendReceipt {
+    pub row_id: i64,
+    pub guid: String,
+}
+
+fn parse_send_receipt(stdout: &[u8]) -> Option<SendReceipt> {
+    parse_ndjson::<serde_json::Value>(stdout)
+        .ok()?
+        .into_iter()
+        .find_map(|value| {
+            if value.get("status").and_then(|v| v.as_str()) != Some("sent") {
+                return None;
+            }
+            Some(SendReceipt {
+                row_id: value.get("id")?.as_i64()?,
+                guid: value.get("guid")?.as_str()?.to_string(),
+            })
+        })
 }
 
 /// Send once through the explicit iMessage-only direct-recipient path. Mutation failures are
@@ -458,7 +602,7 @@ pub async fn send(
     config: &IMessageChannelConfig,
     text: &str,
     image: Option<&Path>,
-) -> Result<String, HealthState> {
+) -> Result<SendReceipt, HealthState> {
     let output = timeout(
         Duration::from_secs(60),
         Command::new("imsg")
@@ -480,24 +624,211 @@ pub async fn send(
             &String::from_utf8_lossy(&output.stderr),
         ));
     }
-    let sent = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .find(|value| value.get("status").and_then(|v| v.as_str()) == Some("sent"))
-        .ok_or(HealthState::SendFailed)?;
-    Ok(sent
-        .get("message_id")
-        .or_else(|| sent.get("guid"))
-        .or_else(|| sent.get("id"))
-        .map(|value| value.to_string())
-        .unwrap_or_else(|| "sent".into()))
+    parse_send_receipt(&output.stdout).ok_or(HealthState::SendFailed)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreSendBoundary {
+    pub latest_row_id: Option<i64>,
+    pub started_at_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedRequest {
+    pub chat: ChatIdentity,
+    pub sent: SendReceipt,
+}
+
+async fn history(chat_id: i64, limit: usize) -> Result<Vec<InboundMessage>, HealthState> {
+    let output = timeout(
+        Duration::from_secs(10),
+        Command::new("imsg")
+            .args([
+                "history",
+                "--chat-id",
+                &chat_id.to_string(),
+                "--limit",
+                &limit.to_string(),
+                "--json",
+            ])
+            .output(),
+    )
+    .await
+    .map_err(|_| HealthState::MessagesUnavailable)?
+    .map_err(|_| HealthState::MessagesUnavailable)?;
+    if !output.status.success() {
+        return Err(HealthState::MessagesUnavailable);
+    }
+    parse_ndjson(&output.stdout)
+}
+
+pub async fn pre_send_boundary(readiness: &Readiness) -> Result<PreSendBoundary, HealthState> {
+    let latest_row_id = match readiness {
+        Readiness::Ready(chat) => history(chat.id, 1).await?.first().map(|message| message.id),
+        Readiness::BootstrapRequired => None,
+    };
+    Ok(PreSendBoundary {
+        latest_row_id,
+        started_at_ms: chrono::Utc::now().timestamp_millis(),
+    })
+}
+
+fn resolve_sent_request(
+    config: &IMessageChannelConfig,
+    boundary: &PreSendBoundary,
+    receipt: &SendReceipt,
+    text: &str,
+    chats: &[ChatRecord],
+    messages: &[InboundMessage],
+) -> Result<ResolvedRequest, HealthState> {
+    let mut matches = Vec::new();
+    for chat in chats
+        .iter()
+        .filter(|chat| post_send_chat_matches(config, chat))
+    {
+        for message in messages.iter().filter(|message| {
+            message.chat_id == chat.id
+                && message.id == receipt.row_id
+                && message.guid == receipt.guid
+                && message.is_from_me
+                && message.text.as_deref() == Some(text)
+                && chrono::DateTime::parse_from_rfc3339(&message.created_at)
+                    .is_ok_and(|created| created.timestamp_millis() >= boundary.started_at_ms)
+        }) {
+            let _ = message;
+            matches.push(ResolvedRequest {
+                chat: ChatIdentity {
+                    id: chat.id,
+                    guid: chat.guid.clone().unwrap_or_default(),
+                },
+                sent: receipt.clone(),
+            });
+        }
+    }
+    match matches.as_slice() {
+        [resolved] => Ok(resolved.clone()),
+        [] => Err(HealthState::MessagesUnavailable),
+        _ => Err(HealthState::AmbiguousChat),
+    }
+}
+
+pub async fn resolve_after_send(
+    config: &IMessageChannelConfig,
+    readiness: &Readiness,
+    boundary: &PreSendBoundary,
+    receipt: &SendReceipt,
+    text: &str,
+) -> Result<ResolvedRequest, HealthState> {
+    if boundary
+        .latest_row_id
+        .is_some_and(|row_id| receipt.row_id <= row_id)
+    {
+        return Err(HealthState::MessagesUnavailable);
+    }
+    let message = read_sent_event(receipt, boundary, text).await?;
+    let chats = list_chats(POST_SEND_CHAT_LIMIT, Duration::from_secs(10)).await?;
+    let candidates: Vec<_> = chats
+        .into_iter()
+        .filter(|chat| {
+            chat.id == message.chat_id
+                && match readiness {
+                    Readiness::Ready(expected) => {
+                        chat.id == expected.id
+                            && chat.guid.as_deref() == Some(expected.guid.as_str())
+                    }
+                    Readiness::BootstrapRequired => true,
+                }
+        })
+        .collect();
+    resolve_sent_request(config, boundary, receipt, text, &candidates, &[message])
+}
+
+async fn read_sent_event(
+    receipt: &SendReceipt,
+    boundary: &PreSendBoundary,
+    text: &str,
+) -> Result<InboundMessage, HealthState> {
+    let since_row_id = receipt
+        .row_id
+        .checked_sub(1)
+        .ok_or(HealthState::MessagesUnavailable)?;
+    let (mut child, mut reader) = spawn_watch_process(None, since_row_id)?;
+    let result = timeout(Duration::from_secs(10), async {
+        loop {
+            let message = read_inbound_line(&mut reader)
+                .await?
+                .ok_or(HealthState::WatchFailed)?;
+            if message.id < receipt.row_id {
+                continue;
+            }
+            if message.id != receipt.row_id
+                || message.guid != receipt.guid
+                || !message.is_from_me
+                || message.text.as_deref() != Some(text)
+                || chrono::DateTime::parse_from_rfc3339(&message.created_at)
+                    .map_or(true, |created| {
+                        created.timestamp_millis() < boundary.started_at_ms
+                    })
+            {
+                return Err(HealthState::MessagesUnavailable);
+            }
+            return Ok(message);
+        }
+    })
+    .await
+    .unwrap_or(Err(HealthState::MessagesUnavailable));
+    let _ = child.kill().await;
+    let _ = child.wait().await;
+    result
+}
+
+pub fn persist_resolved_chat(
+    original: &IMessageChannelConfig,
+    resolved: &ResolvedRequest,
+) -> Result<(), HealthState> {
+    if original.chat_id == Some(resolved.chat.id) && original.chat_guid.trim() == resolved.chat.guid
+    {
+        return Ok(());
+    }
+    let mut config = AppConfig::load_without_secrets();
+    let channel = &mut config.channels.imessage;
+    if !channel.enabled
+        || channel.recipient.trim() != original.recipient.trim()
+        || channel.identity_mode != original.identity_mode
+        || channel.chat_id.is_some()
+        || !channel.chat_guid.trim().is_empty()
+    {
+        return Err(HealthState::MessagesUnavailable);
+    }
+    channel.chat_id = Some(resolved.chat.id);
+    channel.chat_guid = resolved.chat.guid.clone();
+    config.save().map_err(|_| HealthState::MessagesUnavailable)
 }
 
 /// Start a single chat-scoped NDJSON watcher. `kill_on_drop` is defense in depth; callers still
 /// explicitly kill and reap the child on every terminal path.
-pub fn spawn_watch(chat_id: i64) -> Result<(Child, BufReader<ChildStdout>), HealthState> {
+pub fn spawn_watch(
+    chat_id: i64,
+    since_row_id: i64,
+) -> Result<(Child, BufReader<ChildStdout>), HealthState> {
+    spawn_watch_process(Some(chat_id), since_row_id)
+}
+
+fn spawn_watch_process(
+    chat_id: Option<i64>,
+    since_row_id: i64,
+) -> Result<(Child, BufReader<ChildStdout>), HealthState> {
+    let mut args = vec!["watch".to_string()];
+    if let Some(chat_id) = chat_id {
+        args.extend(["--chat-id".into(), chat_id.to_string()]);
+    }
+    args.extend([
+        "--since-rowid".into(),
+        since_row_id.to_string(),
+        "--json".into(),
+    ]);
     let mut child = Command::new("imsg")
-        .args(watch_args(chat_id))
+        .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -520,7 +851,9 @@ pub async fn read_inbound_line(
     let mut line = String::new();
     match reader.read_line(&mut line).await {
         Ok(0) => Err(HealthState::WatchFailed),
-        Ok(_) => Ok(serde_json::from_str(line.trim()).ok()),
+        Ok(_) => serde_json::from_str(line.trim())
+            .map(Some)
+            .map_err(|_| HealthState::WatchFailed),
         Err(_) => Err(HealthState::WatchFailed),
     }
 }
@@ -536,6 +869,7 @@ pub fn classify_failure(exit_code: Option<i32>, stderr: &str) -> HealthState {
         HealthState::RecipientNotImessage
     } else if message.contains("operation not permitted")
         || message.contains("full disk access")
+        || message.contains("authorization denied")
         || message.contains("permission")
     {
         HealthState::PermissionMissing
@@ -600,6 +934,7 @@ mod tests {
         IMessageChannelConfig {
             enabled: true,
             recipient: "+15551234567".into(),
+            identity_mode: crate::config::IMessageIdentityMode::DistinctPeer,
             chat_id: Some(42),
             chat_guid: "iMessage;-;+15551234567".into(),
         }
@@ -692,11 +1027,44 @@ mod tests {
     }
 
     #[test]
+    fn watcher_resumes_strictly_after_the_sent_row() {
+        assert_eq!(
+            watch_args(42, 9000),
+            vec![
+                "watch",
+                "--chat-id",
+                "42",
+                "--since-rowid",
+                "9000",
+                "--json"
+            ]
+        );
+    }
+
+    #[test]
     fn reply_parser_requires_exact_token_and_one_based_option() {
         assert_eq!(parse_reply("7F32 2"), Some(("7F32".into(), 1)));
-        for invalid in ["2", "7F32", "7F32 0", "7F32 two", "7F32 2 extra", "7f32 2"] {
+        for invalid in [
+            "2",
+            "7F32",
+            "7F32 0",
+            "7F32 two",
+            "7F32 2 extra",
+            "7f32 2",
+            " 7F32 2",
+            "7F32  2",
+            "7F32\t2",
+            "7F32 2\n",
+        ] {
             assert_eq!(parse_reply(invalid), None, "accepted {invalid:?}");
         }
+    }
+
+    #[test]
+    fn compatible_imsg_profile_is_exact() {
+        assert!(compatible_version(b"0.15.1\n"));
+        assert!(!compatible_version(b"0.15.0\n"));
+        assert!(!compatible_version(b"0.16.0\n"));
     }
 
     #[test]
@@ -719,12 +1087,27 @@ mod tests {
     }
 
     #[test]
-    fn correlation_rejects_wrong_self_stale_late_and_non_text_messages() {
+    fn same_account_accepts_only_a_strictly_post_send_reply() {
         let mut pending = PendingReplies::default();
-        pending.register("7F32", "request-123", 42, vec![0, 1], 2_000);
+        pending.register(
+            "7F32",
+            "request-123",
+            RequestBoundary {
+                identity_mode: crate::config::IMessageIdentityMode::SameAccount,
+                chat_id: 42,
+                sent_row_id: 100,
+                sent_guid: "REQUEST-GUID".into(),
+            },
+            vec![0, 1],
+            2_000,
+        );
         let valid = InboundMessage {
+            id: 101,
             chat_id: 42,
-            is_from_me: false,
+            guid: "REPLY-GUID".into(),
+            reply_to_guid: None,
+            created_at: "2026-09-07T10:00:01.000Z".into(),
+            is_from_me: true,
             text: Some("7F32 2".into()),
             is_reaction: false,
             has_attachments: false,
@@ -737,39 +1120,377 @@ mod tests {
             })
         );
         assert_eq!(pending.resolve(&valid, 1_500), None, "late duplicate");
+    }
 
-        for message in [
-            InboundMessage {
-                chat_id: 7,
-                ..valid.clone()
-            },
-            InboundMessage {
-                is_from_me: true,
-                ..valid.clone()
-            },
-            InboundMessage {
-                text: None,
-                has_attachments: true,
-                ..valid.clone()
-            },
-            InboundMessage {
-                is_reaction: true,
-                ..valid.clone()
-            },
+    #[test]
+    fn same_account_rejects_outgoing_stale_wrong_chat_and_non_text_rows() {
+        let mut pending = PendingReplies::default();
+        let register = |pending: &mut PendingReplies, token: &str| {
+            pending.register(
+                token,
+                "request-123",
+                RequestBoundary {
+                    identity_mode: crate::config::IMessageIdentityMode::SameAccount,
+                    chat_id: 42,
+                    sent_row_id: 100,
+                    sent_guid: "REQUEST-GUID".into(),
+                },
+                vec![0, 1],
+                2_000,
+            );
+        };
+        let candidate = InboundMessage {
+            id: 101,
+            chat_id: 42,
+            guid: "REPLY-GUID".into(),
+            reply_to_guid: None,
+            created_at: "2026-09-07T10:00:01.000Z".into(),
+            is_from_me: true,
+            text: Some("7F32 1".into()),
+            is_reaction: false,
+            has_attachments: false,
+        };
+
+        for (token, message) in [
+            (
+                "7F32",
+                InboundMessage {
+                    id: 100,
+                    guid: "REQUEST-GUID".into(),
+                    ..candidate.clone()
+                },
+            ),
+            (
+                "7F32",
+                InboundMessage {
+                    id: 99,
+                    ..candidate.clone()
+                },
+            ),
+            (
+                "7F32",
+                InboundMessage {
+                    chat_id: 7,
+                    ..candidate.clone()
+                },
+            ),
+            (
+                "7F32",
+                InboundMessage {
+                    text: Some("FFFF 1".into()),
+                    ..candidate.clone()
+                },
+            ),
+            (
+                "7F32",
+                InboundMessage {
+                    text: Some("7F32 3".into()),
+                    ..candidate.clone()
+                },
+            ),
+            (
+                "7F32",
+                InboundMessage {
+                    text: None,
+                    has_attachments: true,
+                    ..candidate.clone()
+                },
+            ),
+            (
+                "7F32",
+                InboundMessage {
+                    is_reaction: true,
+                    ..candidate.clone()
+                },
+            ),
         ] {
+            register(&mut pending, token);
             assert_eq!(pending.resolve(&message, 1_500), None);
         }
 
-        pending.register("9ABC", "stale", 42, vec![0, 1], 2_000);
+        register(&mut pending, "7F32");
+        assert_eq!(pending.resolve(&candidate, 2_001), None, "expired reply");
+    }
+
+    #[test]
+    fn inline_reply_guid_must_match_the_sent_request() {
+        let mut pending = PendingReplies::default();
+        pending.register(
+            "7F32",
+            "request-123",
+            RequestBoundary {
+                identity_mode: crate::config::IMessageIdentityMode::SameAccount,
+                chat_id: 42,
+                sent_row_id: 100,
+                sent_guid: "REQUEST-GUID".into(),
+            },
+            vec![0, 1],
+            2_000,
+        );
+        let message = InboundMessage {
+            id: 101,
+            chat_id: 42,
+            guid: "REPLY-GUID".into(),
+            reply_to_guid: Some("OTHER-GUID".into()),
+            created_at: "2026-09-07T10:00:01.000Z".into(),
+            is_from_me: true,
+            text: Some("7F32 1".into()),
+            is_reaction: false,
+            has_attachments: false,
+        };
+        assert_eq!(pending.resolve(&message, 1_500), None);
+    }
+
+    #[test]
+    fn distinct_peer_still_rejects_is_from_me() {
+        let mut pending = PendingReplies::default();
+        pending.register(
+            "7F32",
+            "request-123",
+            RequestBoundary {
+                identity_mode: crate::config::IMessageIdentityMode::DistinctPeer,
+                chat_id: 42,
+                sent_row_id: 100,
+                sent_guid: "REQUEST-GUID".into(),
+            },
+            vec![0, 1],
+            2_000,
+        );
+        let message = InboundMessage {
+            id: 101,
+            chat_id: 42,
+            guid: "REPLY-GUID".into(),
+            reply_to_guid: None,
+            created_at: "2026-09-07T10:00:01.000Z".into(),
+            is_from_me: true,
+            text: Some("7F32 1".into()),
+            is_reaction: false,
+            has_attachments: false,
+        };
+        assert_eq!(pending.resolve(&message, 1_500), None);
+    }
+
+    #[test]
+    fn recipient_without_an_existing_chat_is_bootstrap_required() {
+        let mut config = imessage_config();
+        config.identity_mode = crate::config::IMessageIdentityMode::SameAccount;
+        config.chat_id = None;
+        config.chat_guid.clear();
         assert_eq!(
-            pending.resolve(
-                &InboundMessage {
-                    text: Some("9ABC 1".into()),
-                    ..valid
-                },
-                2_001
+            readiness_from_chats(&config, &[]),
+            Ok(Readiness::BootstrapRequired)
+        );
+    }
+
+    #[test]
+    fn ambiguous_post_bootstrap_resolution_fails_closed() {
+        let mut config = imessage_config();
+        config.identity_mode = crate::config::IMessageIdentityMode::SameAccount;
+        config.chat_id = None;
+        config.chat_guid.clear();
+        let chats = vec![
+            ChatRecord {
+                id: 42,
+                guid: Some("iMessage;-;first".into()),
+                service: "iMessage".into(),
+                is_group: false,
+                participants: vec![config.recipient.clone()],
+            },
+            ChatRecord {
+                id: 43,
+                guid: Some("iMessage;-;second".into()),
+                service: "iMessage".into(),
+                is_group: false,
+                participants: vec![config.recipient.clone()],
+            },
+        ];
+        let receipt = SendReceipt {
+            row_id: 101,
+            guid: "REQUEST-GUID".into(),
+        };
+        let boundary = PreSendBoundary {
+            latest_row_id: None,
+            started_at_ms: 0,
+        };
+        let messages = vec![
+            InboundMessage {
+                id: 101,
+                chat_id: 42,
+                guid: receipt.guid.clone(),
+                reply_to_guid: None,
+                created_at: "2026-09-07T10:00:00.000Z".into(),
+                is_from_me: true,
+                text: Some("rendered request".into()),
+                is_reaction: false,
+                has_attachments: false,
+            },
+            InboundMessage {
+                chat_id: 43,
+                ..InboundMessage {
+                    id: 101,
+                    chat_id: 42,
+                    guid: receipt.guid.clone(),
+                    reply_to_guid: None,
+                    created_at: "2026-09-07T10:00:00.000Z".into(),
+                    is_from_me: true,
+                    text: Some("rendered request".into()),
+                    is_reaction: false,
+                    has_attachments: false,
+                }
+            },
+        ];
+        assert_eq!(
+            resolve_sent_request(
+                &config,
+                &boundary,
+                &receipt,
+                "rendered request",
+                &chats,
+                &messages
             ),
-            None
+            Err(HealthState::AmbiguousChat)
+        );
+    }
+
+    #[test]
+    fn post_send_resolution_rejects_a_row_before_the_time_boundary() {
+        let mut config = imessage_config();
+        config.chat_id = None;
+        config.chat_guid.clear();
+        let chats = vec![ChatRecord {
+            id: 42,
+            guid: Some("iMessage;-;direct".into()),
+            service: "iMessage".into(),
+            is_group: false,
+            participants: vec![config.recipient.clone()],
+        }];
+        let receipt = SendReceipt {
+            row_id: 101,
+            guid: "REQUEST-GUID".into(),
+        };
+        let messages = vec![InboundMessage {
+            id: 101,
+            chat_id: 42,
+            guid: receipt.guid.clone(),
+            reply_to_guid: None,
+            created_at: "2026-09-07T10:00:00.000Z".into(),
+            is_from_me: true,
+            text: Some("rendered request".into()),
+            is_reaction: false,
+            has_attachments: false,
+        }];
+        let boundary = PreSendBoundary {
+            latest_row_id: None,
+            started_at_ms: chrono::DateTime::parse_from_rfc3339("2026-09-07T10:00:01.000Z")
+                .unwrap()
+                .timestamp_millis(),
+        };
+
+        assert_eq!(
+            resolve_sent_request(
+                &config,
+                &boundary,
+                &receipt,
+                "rendered request",
+                &chats,
+                &messages
+            ),
+            Err(HealthState::MessagesUnavailable)
+        );
+    }
+
+    #[test]
+    fn same_account_post_send_resolution_allows_local_implicit_participants() {
+        let mut config = imessage_config();
+        config.identity_mode = crate::config::IMessageIdentityMode::SameAccount;
+        config.chat_id = None;
+        config.chat_guid.clear();
+        let chats = vec![ChatRecord {
+            id: 42,
+            guid: Some("iMessage;-;self".into()),
+            service: "iMessage".into(),
+            is_group: false,
+            participants: vec![],
+        }];
+        let receipt = SendReceipt {
+            row_id: 101,
+            guid: "REQUEST-GUID".into(),
+        };
+        let boundary = PreSendBoundary {
+            latest_row_id: None,
+            started_at_ms: 0,
+        };
+        let messages = vec![InboundMessage {
+            id: 101,
+            chat_id: 42,
+            guid: receipt.guid.clone(),
+            reply_to_guid: None,
+            created_at: "2026-09-07T10:00:00.000Z".into(),
+            is_from_me: true,
+            text: Some("rendered request".into()),
+            is_reaction: false,
+            has_attachments: false,
+        }];
+
+        assert_eq!(
+            resolve_sent_request(
+                &config,
+                &boundary,
+                &receipt,
+                "rendered request",
+                &chats,
+                &messages
+            ),
+            Ok(ResolvedRequest {
+                chat: ChatIdentity {
+                    id: 42,
+                    guid: "iMessage;-;self".into(),
+                },
+                sent: receipt,
+            })
+        );
+    }
+
+    #[test]
+    fn distinct_peer_post_send_resolution_keeps_exact_participant_check() {
+        let config = imessage_config();
+        let chats = vec![ChatRecord {
+            id: 42,
+            guid: Some("iMessage;-;peer".into()),
+            service: "iMessage".into(),
+            is_group: false,
+            participants: vec![],
+        }];
+        let receipt = SendReceipt {
+            row_id: 101,
+            guid: "REQUEST-GUID".into(),
+        };
+        let boundary = PreSendBoundary {
+            latest_row_id: None,
+            started_at_ms: 0,
+        };
+        let messages = vec![InboundMessage {
+            id: 101,
+            chat_id: 42,
+            guid: receipt.guid.clone(),
+            reply_to_guid: None,
+            created_at: "2026-09-07T10:00:00.000Z".into(),
+            is_from_me: true,
+            text: Some("rendered request".into()),
+            is_reaction: false,
+            has_attachments: false,
+        }];
+
+        assert_eq!(
+            resolve_sent_request(
+                &config,
+                &boundary,
+                &receipt,
+                "rendered request",
+                &chats,
+                &messages
+            ),
+            Err(HealthState::MessagesUnavailable)
         );
     }
 

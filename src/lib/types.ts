@@ -714,6 +714,7 @@ export interface FeishuChannelConfig {
 export interface IMessageChannelConfig {
   enabled: boolean;
   recipient: string;
+  identityMode: "distinct_peer" | "same_account";
   chatId: number | null;
   chatGuid: string;
 }

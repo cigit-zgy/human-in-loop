@@ -505,10 +505,13 @@ export default {
         "Uses the external imsg CLI and always disables SMS fallback. Only bounded structured confirmations are delivered.",
       imessageRecipient: "Verified recipient handle",
       imessageRecipientPlaceholder: "+15551234567 or name@example.com",
+      imessageIdentityMode: "Reply identity mode",
+      imessageDistinctPeer: "Distinct peer",
+      imessageSameAccount: "Same Apple Account",
       imessageChatId: "Direct chat ID",
       imessageChatGuid: "Direct chat GUID",
       imessageSetupHint:
-        "Choose an existing direct iMessage conversation from `imsg chats --json`. The saved ID, GUID, peer, and iMessage service are revalidated before every send.",
+        "An existing direct chat is reused when available. Otherwise the first structured confirmation bootstraps it through explicit iMessage-only delivery.",
     },
     history: {
       title: "Reply history",

@@ -141,6 +141,7 @@ export function useSettingsSearch(deps: {
       ]),
       e("channel", "settings.channels.imessageTitle", [
         "settings.channels.imessageRecipient",
+        "settings.channels.imessageIdentityMode",
         "settings.channels.imessageChatId",
         "settings.channels.imessageChatGuid",
       ]),

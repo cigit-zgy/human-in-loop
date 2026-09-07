@@ -335,12 +335,21 @@ impl Default for FeishuChannelConfig {
     }
 }
 
-/// One pre-existing direct Apple Messages conversation, validated as iMessage before use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum IMessageIdentityMode {
+    #[default]
+    DistinctPeer,
+    SameAccount,
+}
+
+/// One user-approved Apple Messages destination, resolved to a direct iMessage chat when known.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct IMessageChannelConfig {
     pub enabled: bool,
     pub recipient: String,
+    pub identity_mode: IMessageIdentityMode,
     pub chat_id: Option<i64>,
     pub chat_guid: String,
 }
@@ -660,6 +669,10 @@ mod tests {
         assert_eq!(c.channels.feishu.base_url, "https://open.feishu.cn");
         assert!(!c.channels.imessage.enabled);
         assert!(c.channels.imessage.recipient.is_empty());
+        assert_eq!(
+            serde_json::to_value(&c.channels.imessage).unwrap()["identityMode"],
+            "distinct_peer"
+        );
         assert!(c.channels.imessage.chat_id.is_none());
         assert!(c.channels.imessage.chat_guid.is_empty());
         // 「按需发送」默认关；子开关「自动结束 watch」默认开。
@@ -773,12 +786,17 @@ mod tests {
         c.general.theme = ThemeMode::Dark;
         c.channels.imessage.enabled = true;
         c.channels.imessage.recipient = "person@example.com".to_string();
+        c.channels.imessage.identity_mode = IMessageIdentityMode::SameAccount;
         c.channels.imessage.chat_id = Some(42);
         c.save_to(&path).unwrap();
         let loaded = AppConfig::load_from(&path);
         assert_eq!(loaded.general.theme, ThemeMode::Dark);
         assert!(loaded.channels.imessage.enabled);
         assert_eq!(loaded.channels.imessage.recipient, "person@example.com");
+        assert_eq!(
+            loaded.channels.imessage.identity_mode,
+            IMessageIdentityMode::SameAccount
+        );
         assert_eq!(loaded.channels.imessage.chat_id, Some(42));
     }
 

@@ -132,12 +132,19 @@ const config = computed(() => ctx.config.value!);
         />
       </div>
       <div class="field">
-        <label>{{ t("settings.channels.imessageChatId") }}</label>
-        <input class="input" type="number" v-model.number="config.channels.imessage.chatId" @change="persist" />
+        <label>{{ t("settings.channels.imessageIdentityMode") }}</label>
+        <select class="input" v-model="config.channels.imessage.identityMode" @change="persist">
+          <option value="distinct_peer">{{ t("settings.channels.imessageDistinctPeer") }}</option>
+          <option value="same_account">{{ t("settings.channels.imessageSameAccount") }}</option>
+        </select>
       </div>
-      <div class="field">
+      <div v-if="config.channels.imessage.chatId !== null" class="field">
+        <label>{{ t("settings.channels.imessageChatId") }}</label>
+        <input class="input" type="number" v-model.number="config.channels.imessage.chatId" readonly />
+      </div>
+      <div v-if="config.channels.imessage.chatGuid" class="field">
         <label>{{ t("settings.channels.imessageChatGuid") }}</label>
-        <input class="input" v-model="config.channels.imessage.chatGuid" @change="persist" />
+        <input class="input" v-model="config.channels.imessage.chatGuid" readonly />
       </div>
       <p class="card-desc">{{ t("settings.channels.imessageSetupHint") }}</p>
     </template>

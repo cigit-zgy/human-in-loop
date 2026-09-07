@@ -1,7 +1,7 @@
 //! `AskHuman channel` configuration for the two maintained remote delivery channels.
 
 use super::cfgio::{self, SecretSource};
-use crate::config::AppConfig;
+use crate::config::{AppConfig, IMessageIdentityMode};
 use crate::i18n::{err_prefix, Lang};
 use std::collections::HashMap;
 use std::process::exit;
@@ -155,6 +155,11 @@ fn set(args: &[String], lang: Lang) -> Result<(), String> {
             if let Some(value) = parsed.values.remove("recipient") {
                 channel.recipient = value;
             }
+            if let Some(value) = parsed.values.remove("identity-mode") {
+                channel.identity_mode = parse_identity_mode(&value).ok_or_else(|| {
+                    "identity-mode must be distinct_peer or same_account".to_string()
+                })?;
+            }
             if let Some(value) = parsed.values.remove("chat-guid") {
                 channel.chat_guid = value;
             }
@@ -224,7 +229,11 @@ fn test(args: &[String], lang: Lang) -> Result<(), String> {
         "imessage" => {
             let health =
                 cfgio::block_on(crate::channels::imessage::health(&config.channels.imessage));
-            if health == crate::channels::imessage::HealthState::Ready {
+            if matches!(
+                health,
+                crate::channels::imessage::HealthState::Ready
+                    | crate::channels::imessage::HealthState::BootstrapRequired
+            ) {
                 print_line(health.as_str());
                 Ok(())
             } else {
@@ -244,8 +253,8 @@ fn detect(args: &[String], lang: Lang) -> Result<(), String> {
     if name == "imessage" {
         return Err(cfgio::t(
             lang,
-            "Select an existing direct peer with `imsg chats --json`, then save recipient, chat-id, and chat-guid.",
-            "请用 `imsg chats --json` 选择已有单聊，再保存 recipient、chat-id 和 chat-guid。",
+            "Configure the approved recipient and identity mode; the first structured confirmation can bootstrap the direct iMessage chat.",
+            "请配置获批收件人与身份模式；第一条结构化确认可自动建立 iMessage 单聊。",
         ));
     }
     let config = AppConfig::load();
@@ -316,11 +325,7 @@ pub(crate) fn is_configured(config: &AppConfig, name: &str) -> bool {
                 && !config.channels.feishu.open_id.trim().is_empty()
                 && cfgio::secret_is_set(crate::secrets::ACCOUNT_FEISHU_SECRET)
         }
-        "imessage" => {
-            !config.channels.imessage.recipient.trim().is_empty()
-                && config.channels.imessage.chat_id.is_some()
-                && !config.channels.imessage.chat_guid.trim().is_empty()
-        }
+        "imessage" => !config.channels.imessage.recipient.trim().is_empty(),
         _ => false,
     }
 }
@@ -336,11 +341,46 @@ fn yes_no_word(value: bool, lang: Lang) -> String {
 fn help(lang: Lang) -> String {
     cfgio::t(
         lang,
-        "AskHuman channel — maintained channels: feishu | imessage\n\n  channel list [--json]\n  channel set feishu [--enable|--disable] --app-id <id> --open-id <id> --base-url <url> --app-secret-{env|file|stdin}\n  channel set imessage [--enable|--disable] --recipient <handle> --chat-id <id> --chat-guid <guid>\n  channel enable|disable <name>\n  channel test <name>\n  channel detect feishu [--save]\n\nApple Messages always uses explicit iMessage service with SMS fallback disabled.",
-        "AskHuman channel —— 受维护渠道：feishu | imessage\n\n  channel list [--json]\n  channel set feishu [--enable|--disable] --app-id <id> --open-id <id> --base-url <url> --app-secret-{env|file|stdin}\n  channel set imessage [--enable|--disable] --recipient <handle> --chat-id <id> --chat-guid <guid>\n  channel enable|disable <渠道>\n  channel test <渠道>\n  channel detect feishu [--save]\n\nApple 信息始终显式使用 iMessage 服务并关闭 SMS 回退。",
+        "AskHuman channel — maintained channels: feishu | imessage\n\n  channel list [--json]\n  channel set feishu [--enable|--disable] --app-id <id> --open-id <id> --base-url <url> --app-secret-{env|file|stdin}\n  channel set imessage [--enable|--disable] --recipient <handle> --identity-mode <distinct_peer|same_account> [--chat-id <id> --chat-guid <guid>]\n  channel enable|disable <name>\n  channel test <name>\n  channel detect feishu [--save]\n\nApple Messages always uses explicit iMessage service with SMS fallback disabled.",
+        "AskHuman channel —— 受维护渠道：feishu | imessage\n\n  channel list [--json]\n  channel set feishu [--enable|--disable] --app-id <id> --open-id <id> --base-url <url> --app-secret-{env|file|stdin}\n  channel set imessage [--enable|--disable] --recipient <handle> --identity-mode <distinct_peer|same_account> [--chat-id <id> --chat-guid <guid>]\n  channel enable|disable <渠道>\n  channel test <渠道>\n  channel detect feishu [--save]\n\nApple 信息始终显式使用 iMessage 服务并关闭 SMS 回退。",
     )
+}
+
+fn parse_identity_mode(value: &str) -> Option<IMessageIdentityMode> {
+    match value {
+        "distinct_peer" => Some(IMessageIdentityMode::DistinctPeer),
+        "same_account" => Some(IMessageIdentityMode::SameAccount),
+        _ => None,
+    }
 }
 
 fn print_line(value: &str) {
     println!("{value}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn imessage_is_configured_for_bootstrap_without_a_chat() {
+        let mut config = AppConfig::default();
+        config.channels.imessage.enabled = true;
+        config.channels.imessage.recipient = "person@example.com".into();
+        config.channels.imessage.identity_mode = IMessageIdentityMode::SameAccount;
+
+        assert!(is_configured(&config, "imessage"));
+    }
+
+    #[test]
+    fn identity_mode_parser_accepts_only_the_two_supported_modes() {
+        assert_eq!(
+            parse_identity_mode("distinct_peer"),
+            Some(IMessageIdentityMode::DistinctPeer)
+        );
+        assert_eq!(
+            parse_identity_mode("same_account"),
+            Some(IMessageIdentityMode::SameAccount)
+        );
+        assert_eq!(parse_identity_mode("auto"), None);
+    }
 }

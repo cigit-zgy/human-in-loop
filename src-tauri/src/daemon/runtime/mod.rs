@@ -3090,11 +3090,7 @@ fn available_im_channels(config: &AppConfig) -> Vec<&'static str> {
 fn available_confirm_channels(config: &AppConfig) -> Vec<&'static str> {
     let mut available = available_im_channels(config);
     let imessage = &config.channels.imessage;
-    if imessage.enabled
-        && !imessage.recipient.trim().is_empty()
-        && imessage.chat_id.is_some()
-        && !imessage.chat_guid.trim().is_empty()
-    {
+    if imessage.enabled && !imessage.recipient.trim().is_empty() {
         available.push("imessage");
     }
     available
@@ -4057,8 +4053,9 @@ fn print_status(info: &StatusInfo) {
 #[cfg(test)]
 mod tests {
     use super::{
-        agent_kind_for_im, pending_launch_matches, popup_prewarm_requested, popup_should_dispatch,
-        select_im_delivery_candidates, task_workspace_options, InboundRegistry, PendingLaunchWatch,
+        agent_kind_for_im, available_confirm_channels, pending_launch_matches,
+        popup_prewarm_requested, popup_should_dispatch, select_im_delivery_candidates,
+        task_workspace_options, InboundRegistry, PendingLaunchWatch,
     };
     use crate::agents::AgentKind;
     use crate::config::AppConfig;
@@ -4142,6 +4139,16 @@ mod tests {
             ),
             vec!["feishu", "imessage"]
         );
+    }
+
+    #[test]
+    fn configured_imessage_without_chat_is_available_for_bootstrap() {
+        let mut config = AppConfig::default();
+        config.channels.imessage.enabled = true;
+        config.channels.imessage.recipient = "person@example.com".into();
+        config.channels.imessage.identity_mode = crate::config::IMessageIdentityMode::SameAccount;
+
+        assert_eq!(available_confirm_channels(&config), vec!["imessage"]);
     }
 
     #[tokio::test]
