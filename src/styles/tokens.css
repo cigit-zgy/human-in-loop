@@ -1,0 +1,146 @@
+/* macOS 风设计 token：颜色 / 字体 / 间距 / 圆角，深浅色两套 */
+:root {
+  --font-sans: -apple-system, "SF Pro Text", system-ui, "Segoe UI",
+    "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas,
+    "Liberation Mono", monospace;
+
+  --accent: #0a84ff;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+
+  /* 结构性分割线/边框宽度：Retina 上用 0.5px 物理像素细线，避免 1pt 线显粗。
+     强调/选中态（accent 描边）仍保持 1px。 */
+  --hairline: 1px;
+  /* Keyboard / text-field focus glow. Composed with --clickable-shadow on controls;
+     keep as a single shadow list item so it can be stacked safely. */
+  --focus-ring-width: 3px;
+  --focus-ring: 0 0 0 var(--focus-ring-width)
+    color-mix(in srgb, var(--accent) 35%, transparent);
+}
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 2dppx) {
+  :root {
+    --hairline: 0.5px;
+  }
+}
+
+/* 浅色 */
+:root,
+.theme-light {
+  /* 窗口底带一点灰度：让偏白的可点击表面（控件/选项）能从底上浮出来。 */
+  --bg: #f0f0f2;
+  /* Floating surfaces (menus / popovers / modal panels) must stay fully opaque.
+     --bg-elevated and --card-bg are low-alpha washes for in-flow elevation only;
+     using them on overlays lets content underneath show through (esp. on glass). */
+  --surface-overlay: var(--bg);
+  --bg-elevated: rgba(0, 0, 0, 0.045);
+  --card-bg: rgba(0, 0, 0, 0.05);
+  /* 分割线/边框刻意做得很轻（用户反馈线太重显厚重）：层级主要靠背景色差表达。 */
+  --border: rgba(0, 0, 0, 0.08);
+  --text-primary: #1d1d1f;
+  --text-secondary: rgba(0, 0, 0, 0.55);
+  --text-tertiary: rgba(0, 0, 0, 0.38);
+  /* 半透明而非纯白：毛玻璃材质下不透明控件会压住透出的桌面色、显得突兀；
+     Solid 微灰底上则近白、比底色亮一档。 */
+  --control-bg: rgba(255, 255, 255, 0.72);
+  --control-border: rgba(0, 0, 0, 0.16);
+  /* 可点击表面的 hover 底色：浅色只要很轻的一点加深。 */
+  --control-hover-bg: color-mix(in srgb, var(--text-primary) 5%, var(--control-bg));
+  /* 浅色下可点击表面（输入框/选项/按钮）的微阴影，代替描边表达层级；深色为 none。 */
+  --clickable-shadow: 0 1px 4px rgba(0, 0, 0, 0.07), 0 0.5px 1.5px rgba(0, 0, 0, 0.05);
+  --accent-orange: #ff9500;
+  --accent-green: #34c759;
+  /* Agent 控制台「工作中」指示器（spec gui-agent-console C13）：低饱和绿，浅色取深灰绿。 */
+  --ind-working: color-mix(in srgb, #248a3d 70%, #3c3c3e);
+  /* 推荐 Badge 文字色：浅色下用更鲜艳但仍清晰的绿（比 #34c759 更沉、比 #1a7f37 更亮更显眼）。 */
+  --rec-badge-fg: #1c9b41;
+  --diff-add-bg: #dafbe1;
+  --diff-delete-bg: #ffebe9;
+
+  /* 毛玻璃色罩：叠在系统材质上加深底色。0.3 时用户反馈文字看不清；0.45 偏深，定为 0.4。 */
+  --vibrancy-tint: rgba(255, 255, 255, 0.4);
+
+  /* Markdown 配色（对齐 Swift HTMLMarkdownRenderer） */
+  --md-link: #0a84ff;
+  --md-code-bg: rgba(0, 0, 0, 0.06);
+  --md-quote-fg: rgba(0, 0, 0, 0.55);
+  --md-quote-border: rgba(0, 0, 0, 0.2);
+  --md-table-border: rgba(0, 0, 0, 0.1);
+  --md-thead-bg: rgba(0, 0, 0, 0.05);
+  --md-hr: rgba(0, 0, 0, 0.08);
+}
+
+/* 深色 */
+.theme-dark {
+  --bg: #1e1e1e;
+  --bg-elevated: rgba(255, 255, 255, 0.08);
+  --card-bg: rgba(255, 255, 255, 0.085);
+  --border: rgba(255, 255, 255, 0.09);
+  --text-primary: #e8e8ea;
+  --text-secondary: rgba(255, 255, 255, 0.62);
+  --text-tertiary: rgba(255, 255, 255, 0.4);
+  --control-bg: rgba(255, 255, 255, 0.08);
+  --control-border: rgba(255, 255, 255, 0.15);
+  /* 深底上 5% 几乎不可感，深色 hover 用 10%。 */
+  --control-hover-bg: color-mix(in srgb, var(--text-primary) 10%, var(--control-bg));
+  /* Dark: no elevation (invisible/muddy on dark glass). Use a no-op shadow rather
+     than `none` so focus rules can safely compose `var(--clickable-shadow), var(--focus-ring)`. */
+  --clickable-shadow: 0 0 0 transparent;
+  --accent-orange: #ff9f0a;
+  --accent-green: #30d158;
+  /* 控制台「工作中」指示器：深色下近白带一点绿（C13）。 */
+  --ind-working: color-mix(in srgb, #30d158 42%, #f5f5f7);
+  /* 深色下亮绿在深底上对比度已足够，沿用 accent-green。 */
+  --rec-badge-fg: #30d158;
+  --diff-add-bg: #173d25;
+  --diff-delete-bg: #4a1c22;
+
+  --vibrancy-tint: rgba(0, 0, 0, 0.4);
+
+  --md-link: #4ea1ff;
+  --md-code-bg: rgba(255, 255, 255, 0.12);
+  --md-quote-fg: #c2c2c6;
+  --md-quote-border: rgba(255, 255, 255, 0.3);
+  --md-table-border: rgba(255, 255, 255, 0.12);
+  --md-thead-bg: rgba(255, 255, 255, 0.08);
+  --md-hr: rgba(255, 255, 255, 0.1);
+}
+
+/* 跟随系统：在未显式指定 light/dark 类时用媒体查询兜底 */
+@media (prefers-color-scheme: dark) {
+  :root:not(.theme-light) {
+    --bg: #1e1e1e;
+    --bg-elevated: rgba(255, 255, 255, 0.08);
+    --card-bg: rgba(255, 255, 255, 0.085);
+    --border: rgba(255, 255, 255, 0.09);
+    --text-primary: #e8e8ea;
+    --text-secondary: rgba(255, 255, 255, 0.62);
+    --text-tertiary: rgba(255, 255, 255, 0.4);
+    --control-bg: rgba(255, 255, 255, 0.08);
+    --control-border: rgba(255, 255, 255, 0.15);
+    --control-hover-bg: color-mix(in srgb, var(--text-primary) 10%, var(--control-bg));
+    --clickable-shadow: 0 0 0 transparent;
+    --accent-orange: #ff9f0a;
+    --accent-green: #30d158;
+    --ind-working: color-mix(in srgb, #30d158 42%, #f5f5f7);
+    --rec-badge-fg: #30d158;
+    --diff-add-bg: #173d25;
+    --diff-delete-bg: #4a1c22;
+
+    --vibrancy-tint: rgba(0, 0, 0, 0.4);
+
+    --md-link: #4ea1ff;
+    --md-code-bg: rgba(255, 255, 255, 0.12);
+    --md-quote-fg: #c2c2c6;
+    --md-quote-border: rgba(255, 255, 255, 0.3);
+    --md-table-border: rgba(255, 255, 255, 0.12);
+    --md-thead-bg: rgba(255, 255, 255, 0.08);
+    --md-hr: rgba(255, 255, 255, 0.1);
+  }
+}

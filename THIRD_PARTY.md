@@ -10,7 +10,7 @@ This repository intentionally reuses and adapts established open-source componen
 - Disposition: **ADAPT**
 - Role: application/core basis, structured confirmation model, Feishu channel, Agent integration, coordinator, settings/history UI.
 
-The implementation will import/adapt the upstream source while preserving the upstream MIT license notice and recoverable attribution.
+The application source was imported/adapted from this revision. Its upstream MIT notice is preserved at [`LICENSES/AskHuman-MIT.txt`](LICENSES/AskHuman-MIT.txt).
 
 ## openclaw/imsg
 

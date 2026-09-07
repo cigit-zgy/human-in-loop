@@ -1,0 +1,36 @@
+/* 基础重置与排版 */
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#app {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+body {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: var(--bg);
+  accent-color: var(--accent);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+/* macOS translucent materials use a themed tint over the native effect. */
+.material-translucent body {
+  background: var(--vibrancy-tint);
+}
+/* Solid covers the full WebView even if the native window backing cannot be updated. */
+.material-solid body,
+.material-solid #app {
+  background: var(--bg);
+}
+/* Default keyboard focus. Controls that set their own box-shadow (elevation)
+   must re-compose with var(--focus-ring) in :focus-visible, or this ring is lost. */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}

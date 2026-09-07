@@ -6,9 +6,9 @@ The project adapts the open-source architecture of [`Naituw/AskHuman`](https://g
 
 ## Current status
 
-The current accepted design lives under [`design/`](design/README.md). Historical design reasoning lives under `reports/concept/` and never overrides the living design.
+The working application is adapted from the pinned AskHuman 0.13.1 source baseline. The current accepted design lives under [`design/`](design/README.md); historical reasoning under `reports/concept/` never overrides it.
 
-Implementation is intentionally deferred until the accepted design and prior-art decision are committed; local Codex execution will then import/adapt the upstream AskHuman baseline and implement the iMessage channel against the pinned design.
+Feishu retains its long-connection and interactive-card flow. Apple Messages support requires the external `imsg` executable plus Full Disk Access and Messages automation permission on macOS. Configure an existing direct iMessage conversation by saving its exact recipient handle, chat ID, and chat GUID; the adapter revalidates all three before each explicit iMessage-only send.
 
 ## Architecture
 

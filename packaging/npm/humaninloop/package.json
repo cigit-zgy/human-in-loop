@@ -1,0 +1,41 @@
+{
+  "name": "askhuman",
+  "version": "0.13.1",
+  "description": "Human-in-the-loop interaction tool with Feishu and iMessage-only Apple Messages channels.",
+  "license": "MIT",
+  "author": "Naituw",
+  "homepage": "https://github.com/cigit-zgy/human-in-loop",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cigit-zgy/human-in-loop.git"
+  },
+  "type": "commonjs",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "bin": {
+    "AskHuman": "bin/cli.js"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "bin",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=16"
+  },
+  "keywords": [
+    "human-in-the-loop",
+    "cli",
+    "tauri",
+    "ai",
+    "askhuman",
+    "prompt"
+  ],
+  "optionalDependencies": {
+    "@humaninloop/darwin-arm64": "0.13.1",
+    "@humaninloop/darwin-x64": "0.13.1",
+    "@humaninloop/win32-x64": "0.13.1",
+    "@humaninloop/linux-x64": "0.13.1"
+  }
+}

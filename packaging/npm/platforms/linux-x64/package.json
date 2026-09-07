@@ -1,0 +1,21 @@
+{
+  "name": "@humaninloop/linux-x64",
+  "version": "0.13.1",
+  "description": "Linux x64 binary for humaninloop (AskHuman). Installed automatically as an optional dependency of `humaninloop`. GUI popup requires system WebKitGTK.",
+  "license": "MIT",
+  "author": "Naituw",
+  "homepage": "https://github.com/cigit-zgy/human-in-loop",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cigit-zgy/human-in-loop.git"
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin"
+  ]
+}
