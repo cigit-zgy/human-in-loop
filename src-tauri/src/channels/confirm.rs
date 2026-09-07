@@ -600,11 +600,24 @@ pub fn start_imessage(entry: Arc<ConfirmEntry>, config: crate::config::IMessageC
             .lock()
             .unwrap()
             .allocate(&entry.request_id);
+        let repository = match crate::project::repository_identity(&entry.project) {
+            crate::project::RepositoryIdentity::NonRepository => None,
+            crate::project::RepositoryIdentity::Github(repository) => Some(repository),
+            crate::project::RepositoryIdentity::Unavailable => {
+                release_imessage_token(&token, &entry.request_id);
+                fail(
+                    &entry,
+                    channel,
+                    "unsupported: RepositoryIdentityUnavailable",
+                );
+                return;
+            }
+        };
         let rendered = match imessage::render_confirmation(
             &entry.request,
             &token,
             &entry.agent_kind,
-            &entry.project,
+            repository.as_deref(),
         ) {
             Ok(rendered) => rendered,
             Err(reason) => {
@@ -1270,24 +1283,33 @@ mod tests {
     async fn live_same_account_imessage_round_trip() {
         let recipient = std::env::var("ASKHUMAN_IMESSAGE_E2E_RECIPIENT")
             .expect("ASKHUMAN_IMESSAGE_E2E_RECIPIENT must be set");
+        let send_count_file = std::env::var("ASKHUMAN_IMESSAGE_E2E_SEND_COUNT_FILE")
+            .expect("ASKHUMAN_IMESSAGE_E2E_SEND_COUNT_FILE must be set");
         let spec = ConfirmSpec {
-            title: "Human-in-loop iMessage E2E test".into(),
-            context: vec![],
+            title: "Compact iMessage release candidate".into(),
+            context: vec![ConfirmField {
+                id: "release".into(),
+                label: "Status".into(),
+                value: "Release candidate".into(),
+                kind: ConfirmFieldKind::Text,
+            }],
             detail: ConfirmDetail {
-                summary: "Confirm that this iMessage test was received correctly.".into(),
+                summary:
+                    "Does this compact iMessage layout and project label look correct on the iPhone?"
+                        .into(),
                 body_md: String::new(),
             },
             choices: vec![
                 ConfirmChoice {
-                    id: "received_correctly".into(),
-                    label: "Received correctly".into(),
+                    id: "looks_correct".into(),
+                    label: "Looks correct".into(),
                     description: String::new(),
                     role: crate::confirm::ActionRole::Primary,
                     variant: None,
                 },
                 ConfirmChoice {
-                    id: "test_failed".into(),
-                    label: "Test failed".into(),
+                    id: "needs_revision".into(),
+                    label: "Needs revision".into(),
                     description: String::new(),
                     role: crate::confirm::ActionRole::Destructive,
                     variant: None,
@@ -1296,9 +1318,9 @@ mod tests {
             presentation: ConfirmPresentation::SingleSelectSubmit {
                 input: None,
                 submit_label: "Submit".into(),
-                default_action_id: Some("received_correctly".into()),
+                default_action_id: Some("looks_correct".into()),
             },
-            dismiss_action_id: "test_failed".into(),
+            dismiss_action_id: "needs_revision".into(),
             decision_image: None,
         };
         let (entry, mut outcome) = crate::daemon::request::create_internal_confirm(
@@ -1306,7 +1328,7 @@ mod tests {
             "imessage",
             "en",
             env!("CARGO_MANIFEST_DIR"),
-            "codex",
+            "Codex",
             Duration::from_secs(10 * 60),
         )
         .expect("valid canonical confirmation");
@@ -1327,11 +1349,19 @@ mod tests {
             .expect("confirmation outcome channel closed");
         match terminal {
             ConfirmOutcome::Final(result) => {
-                assert_eq!(result.action_id, "received_correctly");
+                assert_eq!(result.action_id, "looks_correct");
                 assert_eq!(result.source_channel_id, "imessage");
                 assert_eq!(result.comment, None);
             }
             ConfirmOutcome::Fallback(reason) => panic!("iMessage fallback: {reason:?}"),
         }
+        let send_count = std::fs::read_to_string(send_count_file)
+            .unwrap_or_default()
+            .lines()
+            .count();
+        assert_eq!(
+            send_count, 1,
+            "one canonical request must send exactly once"
+        );
     }
 }

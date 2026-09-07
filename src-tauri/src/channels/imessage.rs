@@ -15,14 +15,14 @@ use tokio::process::{Child, ChildStdout, Command};
 use tokio::time::{timeout, Duration};
 
 pub const MIN_TOKEN_CHARS: usize = 4;
-pub const MAX_TITLE_CHARS: usize = 60;
-pub const MAX_QUESTION_CHARS: usize = 300;
-pub const MAX_CONTEXT_FIELDS: usize = 5;
-pub const MAX_CONTEXT_VALUE_CHARS: usize = 120;
+pub const MAX_SOURCE_PROJECT_CHARS: usize = 80;
+pub const MAX_QUESTION_CHARS: usize = 160;
+pub const MAX_CONTEXT_FIELDS: usize = 2;
+pub const MAX_CONTEXT_LINE_CHARS: usize = 80;
 pub const MIN_CHOICES: usize = 2;
 pub const MAX_CHOICES: usize = 6;
-pub const MAX_CHOICE_LABEL_CHARS: usize = 80;
-pub const MAX_RENDERED_CHARS: usize = 1_200;
+pub const MAX_CHOICE_LABEL_CHARS: usize = 60;
+pub const MAX_RENDERED_CHARS: usize = 700;
 pub const MAX_IMAGE_BYTES: u64 = 5 * 1024 * 1024;
 const SUPPORTED_IMSG_VERSION: &str = "0.15.1";
 const CHAT_SCAN_LIMIT: usize = 10_000;
@@ -31,10 +31,10 @@ const POST_SEND_CHAT_LIMIT: usize = 20;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnsupportedReason {
-    TitleTooLong,
+    SourceProjectLineTooLong,
     QuestionTooLong,
     TooManyContextFields,
-    ContextValueTooLong,
+    ContextLineTooLong,
     ChoiceCount,
     ChoiceLabelTooLong,
     InteractiveInput,
@@ -50,27 +50,39 @@ pub struct RenderedConfirmation {
     pub choice_indices: Vec<usize>,
 }
 
+fn compact_line(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 pub fn render_confirmation(
     request: &ConfirmRequest,
     token: &str,
     source: &str,
-    project: &str,
+    repository: Option<&str>,
 ) -> Result<RenderedConfirmation, UnsupportedReason> {
-    if request.title.chars().count() > MAX_TITLE_CHARS {
-        return Err(UnsupportedReason::TitleTooLong);
-    }
-    if request.detail.summary.chars().count() > MAX_QUESTION_CHARS {
+    let question = compact_line(&request.detail.summary);
+    if question.chars().count() > MAX_QUESTION_CHARS {
         return Err(UnsupportedReason::QuestionTooLong);
     }
     if request.context.len() > MAX_CONTEXT_FIELDS {
         return Err(UnsupportedReason::TooManyContextFields);
     }
-    if request
+    let context_lines: Vec<_> = request
         .context
         .iter()
-        .any(|field| field.value.chars().count() > MAX_CONTEXT_VALUE_CHARS)
+        .map(|field| {
+            format!(
+                "{}: {}",
+                compact_line(&field.label),
+                compact_line(&field.value)
+            )
+        })
+        .collect();
+    if context_lines
+        .iter()
+        .any(|line| line.chars().count() > MAX_CONTEXT_LINE_CHARS)
     {
-        return Err(UnsupportedReason::ContextValueTooLong);
+        return Err(UnsupportedReason::ContextLineTooLong);
     }
     if request.presentation.input().is_some() {
         return Err(UnsupportedReason::InteractiveInput);
@@ -92,43 +104,47 @@ pub fn render_confirmation(
     }
     if choices
         .iter()
-        .any(|(_, choice)| choice.label.chars().count() > MAX_CHOICE_LABEL_CHARS)
+        .any(|(_, choice)| compact_line(&choice.label).chars().count() > MAX_CHOICE_LABEL_CHARS)
     {
         return Err(UnsupportedReason::ChoiceLabelTooLong);
     }
 
-    let source = source.trim();
-    let source = if source.is_empty() { "Agent" } else { source };
-    let mut lines = vec![format!("AskHuman · {source} [{token}]")];
-    if !project.trim().is_empty() {
-        lines.push(format!("Project: {}", project.trim()));
+    let source = compact_line(source);
+    let source = if source.is_empty() {
+        "Agent".to_string()
+    } else {
+        source
+    };
+    if source.chars().count() > MAX_SOURCE_PROJECT_CHARS {
+        return Err(UnsupportedReason::SourceProjectLineTooLong);
     }
-    lines.push(format!("Action: {}", request.title.trim()));
-    if !request.context.is_empty() {
-        lines.push(String::new());
-        lines.push("Context".into());
-        lines.extend(
-            request
-                .context
-                .iter()
-                .map(|field| format!("{}: {}", field.label.trim(), field.value.trim())),
-        );
-    }
+    let repository = repository.map(compact_line).filter(|name| !name.is_empty());
+    let source_line = match repository {
+        Some(repository) => {
+            let combined = format!("{source} · {repository}");
+            if combined.chars().count() > MAX_SOURCE_PROJECT_CHARS {
+                return Err(UnsupportedReason::SourceProjectLineTooLong);
+            }
+            combined
+        }
+        None => source,
+    };
+    let mut lines = vec![format!("[HIL · {token}]"), source_line];
+    lines.extend(context_lines);
     lines.push(String::new());
-    lines.push("Question".into());
-    lines.push(request.detail.summary.trim().into());
+    lines.push(question);
     lines.push(String::new());
     let default = request.presentation.default_action_id();
     for (position, (_, choice)) in choices.iter().enumerate() {
         let recommended = if default == Some(choice.id.as_str()) {
-            "  [recommended]"
+            " [recommended]"
         } else {
             ""
         };
         lines.push(format!(
-            "{}. {}{}",
+            "{}  {}{}",
             position + 1,
-            choice.label.trim(),
+            compact_line(&choice.label),
             recommended
         ));
     }
@@ -890,7 +906,10 @@ pub fn unix_millis(now: SystemTime) -> u64 {
 mod tests {
     use super::*;
     use crate::confirm::ActionRole;
-    use crate::models::{ConfirmChoice, ConfirmDetail, ConfirmPresentation, ConfirmRequest};
+    use crate::models::{
+        ConfirmChoice, ConfirmDetail, ConfirmField, ConfirmFieldKind, ConfirmPresentation,
+        ConfirmRequest,
+    };
     use std::time::{Duration, SystemTime};
 
     fn request() -> ConfirmRequest {
@@ -940,6 +959,15 @@ mod tests {
         }
     }
 
+    fn context(label: &str, value: &str) -> ConfirmField {
+        ConfirmField {
+            id: label.to_ascii_lowercase().replace(' ', "-"),
+            label: label.into(),
+            value: value.into(),
+            kind: ConfirmFieldKind::Text,
+        }
+    }
+
     #[test]
     fn stored_chat_identity_must_be_direct_exact_peer_and_imessage() {
         let mut chat = ChatRecord {
@@ -961,22 +989,173 @@ mod tests {
     }
 
     #[test]
-    fn renderer_preserves_stable_choice_mapping_and_reply_grammar() {
-        let rendered = render_confirmation(&request(), "7F32", "Codex", "human-in-loop")
+    fn renderer_uses_the_preferred_compact_shape_without_redundant_headings() {
+        let rendered = render_confirmation(&request(), "7F32", "Codex", Some("human-in-loop"))
             .expect("supported request");
         assert_eq!(rendered.choice_indices, vec![0, 1]);
-        assert!(rendered.text.contains("1. Continue  [recommended]"));
-        assert!(rendered.text.ends_with("Reply: 7F32 1"));
-        assert!(rendered.text.chars().count() <= MAX_RENDERED_CHARS);
+        assert_eq!(
+            rendered.text,
+            "[HIL · 7F32]\nCodex · human-in-loop\n\nContinue?\n\n1  Continue [recommended]\n2  Stop\n\nReply: 7F32 1"
+        );
+        for redundant in ["Context", "Question", "Action", "Delete generated objects"] {
+            assert!(!rendered.text.contains(redundant));
+        }
+        assert!(rendered.text.chars().count() <= 700);
     }
 
     #[test]
-    fn renderer_declines_over_budget_or_input_requests_without_truncating() {
-        let mut overlong = request();
-        overlong.title = "界".repeat(MAX_TITLE_CHARS + 1);
+    fn renderer_compacts_fields_to_one_line_without_dropping_words() {
+        let mut multiline = request();
+        multiline.context = vec![context("Release\nstatus", "candidate\tbuild")];
+        multiline.detail.summary = "Does this\ncompact layout look correct?".into();
+        multiline.choices[0].label = "Looks\ncorrect".into();
+        let rendered = render_confirmation(
+            &multiline,
+            "7F32",
+            "Codex\nAgent",
+            Some("human-in-loop\nproject"),
+        )
+        .unwrap();
+        assert!(rendered
+            .text
+            .contains("\nCodex Agent · human-in-loop project\n"));
+        assert!(rendered
+            .text
+            .contains("\nRelease status: candidate build\n"));
+        assert!(rendered
+            .text
+            .contains("\nDoes this compact layout look correct?\n"));
+        assert!(rendered.text.contains("\n1  Looks correct [recommended]\n"));
+    }
+
+    #[test]
+    fn renderer_emits_zero_one_or_two_required_context_lines() {
+        let zero = render_confirmation(&request(), "7F32", "Codex", None).unwrap();
+        assert_eq!(zero.text.lines().nth(1), Some("Codex"));
+        assert!(!zero.text.contains("Release: candidate"));
+
+        let mut one_request = request();
+        one_request.context = vec![context("Release", "candidate")];
+        let one = render_confirmation(&one_request, "7F32", "Codex", None).unwrap();
+        assert!(one.text.contains("\nRelease: candidate\n\nContinue?"));
+
+        let mut two_request = one_request.clone();
+        two_request.context.push(context("Risk", "renderer only"));
+        let two = render_confirmation(&two_request, "7F32", "Codex", None).unwrap();
+        assert!(two
+            .text
+            .contains("\nRelease: candidate\nRisk: renderer only\n\nContinue?"));
+
+        let mut three_request = two_request;
+        three_request.context.push(context("Owner", "User"));
+        assert!(render_confirmation(&three_request, "7F32", "Codex", None).is_err());
+    }
+
+    #[test]
+    fn renderer_enforces_line_and_field_budgets_without_truncation() {
+        let mut long_title = request();
+        long_title.title = "Title is canonical but not duplicated on the phone. ".repeat(4);
+        let rendered = render_confirmation(&long_title, "7F32", "Codex", Some("human-in-loop"))
+            .expect("the compact renderer does not copy the title");
+        assert!(!rendered.text.contains("Title is canonical"));
+
+        let source = "S".repeat(80);
+        let rendered = render_confirmation(&request(), "7F32", &source, None).unwrap();
+        assert_eq!(rendered.text.lines().nth(1), Some(source.as_str()));
+        assert!(render_confirmation(&request(), "7F32", &"S".repeat(81), None).is_err());
+
+        let mut long_context = request();
+        long_context.context = vec![context("L", &"界".repeat(78))];
+        assert!(render_confirmation(&long_context, "7F32", "Codex", None).is_err());
+
+        let mut long_question = request();
+        long_question.detail.summary = "界".repeat(161);
+        assert!(render_confirmation(&long_question, "7F32", "Codex", None).is_err());
+
+        let mut long_choice = request();
+        long_choice.choices[0].label = "界".repeat(61);
+        assert!(render_confirmation(&long_choice, "7F32", "Codex", None).is_err());
+    }
+
+    #[test]
+    fn renderer_never_compacts_away_a_repository_label() {
+        let repository = "R".repeat(10);
+        let source = "S".repeat(67);
+        let rendered = render_confirmation(&request(), "7F32", &source, Some(&repository)).unwrap();
+        assert_eq!(rendered.text.lines().nth(1).unwrap().chars().count(), 80);
+        assert!(rendered.text.lines().nth(1).unwrap().ends_with(&repository));
+
+        let source = "S".repeat(68);
         assert_eq!(
-            render_confirmation(&overlong, "7F32", "Codex", "human-in-loop"),
-            Err(UnsupportedReason::TitleTooLong)
+            render_confirmation(&request(), "7F32", &source, Some(&repository)),
+            Err(UnsupportedReason::SourceProjectLineTooLong)
+        );
+    }
+
+    #[test]
+    fn renderer_preserves_critical_unicode_at_the_hard_limit_or_sends_nothing() {
+        let source = "源".repeat(80);
+        let first_context = "甲: ".to_string() + &"界".repeat(77);
+        let second_context = "乙: ".to_string() + &"文".repeat(77);
+        let question = "问".repeat(160);
+        let label = "选".repeat(60);
+        let mut bounded = request();
+        bounded.context = vec![
+            context("甲", &"界".repeat(77)),
+            context("乙", &"文".repeat(77)),
+        ];
+        bounded.detail.summary = question.clone();
+        bounded.choices[0].label = label.clone();
+        bounded.choices[1].label = label.clone();
+        bounded.choices.push(ConfirmChoice {
+            id: "third".into(),
+            label: label.clone(),
+            description: String::new(),
+            role: ActionRole::Default,
+            variant: None,
+        });
+        let rendered = render_confirmation(&bounded, "7F32", &source, None).unwrap();
+        assert!(rendered.text.contains(&first_context));
+        assert!(rendered.text.contains(&second_context));
+        assert!(rendered.text.contains(&question));
+        assert_eq!(rendered.text.matches(&label).count(), 3);
+        assert!(rendered.text.chars().count() <= 700);
+
+        bounded.choices.push(ConfirmChoice {
+            id: "fourth".into(),
+            label,
+            description: String::new(),
+            role: ActionRole::Default,
+            variant: None,
+        });
+        assert_eq!(
+            render_confirmation(&bounded, "7F32", &source, None),
+            Err(UnsupportedReason::RenderedTextTooLong)
+        );
+    }
+
+    #[test]
+    fn renderer_keeps_choice_count_and_interactive_input_fail_closed() {
+        let mut one_choice = request();
+        one_choice.choices.truncate(1);
+        assert_eq!(
+            render_confirmation(&one_choice, "7F32", "Codex", None),
+            Err(UnsupportedReason::ChoiceCount)
+        );
+
+        let mut seven_choices = request();
+        for index in 3..=7 {
+            seven_choices.choices.push(ConfirmChoice {
+                id: format!("choice-{index}"),
+                label: format!("Choice {index}"),
+                description: String::new(),
+                role: ActionRole::Default,
+                variant: None,
+            });
+        }
+        assert_eq!(
+            render_confirmation(&seven_choices, "7F32", "Codex", None),
+            Err(UnsupportedReason::ChoiceCount)
         );
 
         let mut with_input = request();
@@ -995,7 +1174,7 @@ mod tests {
             default_action_id: None,
         };
         assert_eq!(
-            render_confirmation(&with_input, "7F32", "Codex", "human-in-loop"),
+            render_confirmation(&with_input, "7F32", "Codex", Some("human-in-loop")),
             Err(UnsupportedReason::InteractiveInput)
         );
     }

@@ -7,6 +7,7 @@
 //! the recording point so history can be filtered per project.
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 /// Detect the current project key (absolute path). Returns an empty string only when the working
 /// directory can't be determined.
@@ -57,10 +58,62 @@ pub fn display_name(key: &str) -> String {
         .unwrap_or_else(|| key.to_string())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RepositoryIdentity {
+    NonRepository,
+    Github(String),
+    Unavailable,
+}
+
+/// Resolve canonical repository identity for a project key.
+///
+/// GitHub identity comes from the Git root's `origin` URL. A local directory name is never used as
+/// a fallback because worktrees and renamed checkouts are not canonical GitHub identity. A Git
+/// repository whose canonical remote cannot be resolved is distinct from a non-repository request
+/// so channel renderers can fail closed instead of silently omitting required context.
+pub fn repository_identity(key: &str) -> RepositoryIdentity {
+    let Some(root) = git_root(Path::new(key)) else {
+        return RepositoryIdentity::NonRepository;
+    };
+    let Ok(output) = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["remote", "get-url", "origin"])
+        .output()
+    else {
+        return RepositoryIdentity::Unavailable;
+    };
+    if !output.status.success() {
+        return RepositoryIdentity::Unavailable;
+    }
+    std::str::from_utf8(&output.stdout)
+        .ok()
+        .and_then(repository_name_from_github_remote)
+        .map(RepositoryIdentity::Github)
+        .unwrap_or(RepositoryIdentity::Unavailable)
+}
+
+fn repository_name_from_github_remote(remote: &str) -> Option<String> {
+    let remote = remote.trim().trim_end_matches('/');
+    let path = remote
+        .strip_prefix("https://github.com/")
+        .or_else(|| remote.strip_prefix("ssh://git@github.com/"))
+        .or_else(|| remote.strip_prefix("git@github.com:"))?;
+    let mut segments = path.split('/');
+    let owner = segments.next()?;
+    let repository = segments.next()?;
+    let repository = repository.strip_suffix(".git").unwrap_or(repository);
+    if owner.is_empty() || repository.is_empty() || segments.next().is_some() {
+        return None;
+    }
+    Some(repository.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
+    use std::process::Command;
     use tempfile::tempdir;
 
     #[test]
@@ -90,5 +143,70 @@ mod tests {
     fn display_name_is_basename() {
         assert_eq!(display_name("/home/u/my-proj"), "my-proj");
         assert_eq!(display_name(""), "");
+    }
+
+    #[test]
+    fn github_https_and_ssh_remotes_resolve_to_repository_slug() {
+        assert_eq!(
+            repository_name_from_github_remote("https://github.com/cigit-zgy/human-in-loop.git"),
+            Some("human-in-loop".into())
+        );
+        assert_eq!(
+            repository_name_from_github_remote("git@github.com:cigit-zgy/water-biomodel-agent.git"),
+            Some("water-biomodel-agent".into())
+        );
+    }
+
+    #[test]
+    fn canonical_remote_wins_over_local_directory_identity() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("task-worktree-name");
+        fs::create_dir_all(&root).unwrap();
+        assert!(Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(&root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args([
+                "remote",
+                "add",
+                "origin",
+                "git@github.com:cigit-zgy/human-in-loop.git",
+            ])
+            .current_dir(&root)
+            .status()
+            .unwrap()
+            .success());
+
+        assert_eq!(
+            repository_identity(root.to_str().unwrap()),
+            RepositoryIdentity::Github("human-in-loop".into())
+        );
+    }
+
+    #[test]
+    fn non_repository_has_no_github_repository_label() {
+        let dir = tempdir().unwrap();
+        assert_eq!(
+            repository_identity(dir.path().to_str().unwrap()),
+            RepositoryIdentity::NonRepository
+        );
+    }
+
+    #[test]
+    fn repository_without_a_canonical_github_remote_is_unavailable() {
+        let dir = tempdir().unwrap();
+        assert!(Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(dir.path())
+            .status()
+            .unwrap()
+            .success());
+        assert_eq!(
+            repository_identity(dir.path().to_str().unwrap()),
+            RepositoryIdentity::Unavailable
+        );
     }
 }
