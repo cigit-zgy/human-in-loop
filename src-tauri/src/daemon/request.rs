@@ -518,23 +518,35 @@ impl RequestRegistry {
         task: ConfirmTask,
         agent_console_session_id: Option<String>,
     ) -> Result<(Arc<ConfirmEntry>, UnboundedReceiver<ConfirmOutcome>), String> {
-        const REQUIRED_CONTEXT: [&str; 6] = [
-            "agent",
-            "project",
-            "workspace",
-            "tool",
-            "permission_mode",
-            "created_at",
-        ];
-        for required in REQUIRED_CONTEXT {
-            if !task.spec.context.iter().any(|field| field.id == required) {
-                return Err(format!(
-                    "permission confirmation missing context: {required}"
-                ));
+        match task.origin {
+            crate::ipc::ConfirmTaskOrigin::Permission => {
+                const REQUIRED_CONTEXT: [&str; 6] = [
+                    "agent",
+                    "project",
+                    "workspace",
+                    "tool",
+                    "permission_mode",
+                    "created_at",
+                ];
+                for required in REQUIRED_CONTEXT {
+                    if !task.spec.context.iter().any(|field| field.id == required) {
+                        return Err(format!(
+                            "permission confirmation missing context: {required}"
+                        ));
+                    }
+                }
+                if !matches!(task.agent_kind.as_str(), "claude" | "codex") {
+                    return Err("confirm agent must be claude or codex".to_string());
+                }
             }
-        }
-        if !matches!(task.agent_kind.as_str(), "claude" | "codex") {
-            return Err("confirm agent must be claude or codex".to_string());
+            crate::ipc::ConfirmTaskOrigin::Mcp => {
+                if task.popup_edit.is_some() || task.memory.is_some() {
+                    return Err("MCP confirmation cannot carry permission state".to_string());
+                }
+                if task.source.trim().is_empty() {
+                    return Err("MCP confirmation requires a source".to_string());
+                }
+            }
         }
         if task.agent_session_id.trim().is_empty() {
             return Err("confirm requires an agent session id".to_string());
@@ -554,7 +566,13 @@ impl RequestRegistry {
                 .collect();
             memory.validate(&choice_ids)?;
         }
-        let request_id = uuid::Uuid::new_v4().to_string();
+        let request_id = task
+            .request_id
+            .clone()
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        if request_id.trim().is_empty() {
+            return Err("confirm request id must not be empty".to_string());
+        }
         let token = uuid::Uuid::new_v4().to_string();
         let created_at_ms = crate::perf::now_ms() as u64;
         const TTL_SECS: u64 = 24 * 60 * 60;
@@ -609,6 +627,9 @@ impl RequestRegistry {
             memory_save_failed,
         });
         let mut inner = self.inner.lock().unwrap();
+        if inner.confirm_by_id.contains_key(&request_id) || inner.by_id.contains_key(&request_id) {
+            return Err("confirmation request id is already active".to_string());
+        }
         inner.confirm_by_id.insert(request_id, entry.clone());
         inner.by_token.insert(token, entry.request_id.clone());
         Ok((entry, final_rx))
@@ -947,6 +968,8 @@ mod tests {
         })
         .collect();
         ConfirmTask {
+            origin: crate::ipc::ConfirmTaskOrigin::Permission,
+            request_id: None,
             spec: ConfirmSpec {
                 title: "Permission request".into(),
                 context,

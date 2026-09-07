@@ -616,7 +616,7 @@ pub fn start_imessage(entry: Arc<ConfirmEntry>, config: crate::config::IMessageC
         let rendered = match imessage::render_confirmation(
             &entry.request,
             &token,
-            &entry.agent_kind,
+            &entry.source,
             repository.as_deref(),
         ) {
             Ok(rendered) => rendered,

@@ -365,6 +365,8 @@ fn parse_permission(agent: Agent, input: &Value) -> Option<ParseOutcome> {
     Some(ParseOutcome::Popup(Box::new(ParsedPermission {
         agent,
         task: ConfirmTask {
+            origin: crate::ipc::ConfirmTaskOrigin::Permission,
+            request_id: None,
             spec,
             popup_edit,
             source: agent.label().into(),

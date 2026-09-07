@@ -167,11 +167,24 @@ pub struct TaskRequest {
     pub whats_next: bool,
 }
 
-/// Hidden PermissionRequest hook → daemon confirmation task. The daemon owns request ids and
-/// deadlines, so this wire payload carries only the validated semantic spec and caller context.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ConfirmTaskOrigin {
+    #[default]
+    Permission,
+    Mcp,
+}
+
+/// One structured confirmation submitted to the existing daemon coordinator.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfirmTask {
+    /// Permission hook or public MCP invocation. Missing means the legacy permission path.
+    #[serde(default)]
+    pub origin: ConfirmTaskOrigin,
+    /// MCP may supply the canonical request id; permission requests remain daemon-assigned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
     pub spec: ConfirmSpec,
     /// Structured native edit intent used only by the local permission popup. It is forwarded in
     /// `ShowPayload`, never copied into the daemon-owned `ConfirmRequest` used by IM/history.
@@ -867,6 +880,8 @@ mod tests {
 
     fn confirm_task() -> ConfirmTask {
         ConfirmTask {
+            origin: ConfirmTaskOrigin::Permission,
+            request_id: None,
             spec: crate::models::ConfirmSpec {
                 title: "Approve?".into(),
                 context: vec![],

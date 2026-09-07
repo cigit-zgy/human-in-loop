@@ -44,9 +44,9 @@ pub const CLAUDE_TOOL_TIMEOUT_MS: i64 = 86_400_000;
 pub const GROK_STARTUP_TIMEOUT_SEC: i64 = 30;
 /// Grok MCP 工具调用总超时（秒），24h。
 pub const GROK_TOOL_TIMEOUT_SEC: i64 = 86400;
-/// Grok 针对 `ask` 工具的 per-tool 超时（秒），24h：`tool_timeouts = { ask = 86400 }`。
+/// Grok 针对 `ask_human` 工具的 per-tool 超时（秒），24h。
 /// 对默认模型 Composer 的 per-tool 语义更精准（spec D6 / 调研结论）。
-pub const GROK_ASK_TOOL_TIMEOUT_SEC: i64 = 86400;
+pub const GROK_ASK_HUMAN_TOOL_TIMEOUT_SEC: i64 = 86400;
 
 /// AskHuman 自有的自动集成产物所有权账本。
 ///
@@ -73,14 +73,13 @@ struct TomlInstallOutcome {
     direct_only_added: bool,
 }
 
-/// 某 TOML 目标（Codex / Grok）要写入的超时字段集：`(startup_timeout_sec, tool_timeout_sec, tool_timeouts.ask?)`。
-/// Grok 额外写 per-tool `ask` 超时；Codex 不写（`ask` 位为 None）。
+/// 某 TOML 目标（Codex / Grok）要写入的超时字段集。
 fn toml_profile(target: AgentTarget) -> (i64, i64, Option<i64>) {
     match target {
         AgentTarget::Grok => (
             GROK_STARTUP_TIMEOUT_SEC,
             GROK_TOOL_TIMEOUT_SEC,
-            Some(GROK_ASK_TOOL_TIMEOUT_SEC),
+            Some(GROK_ASK_HUMAN_TOOL_TIMEOUT_SEC),
         ),
         _ => (CODEX_STARTUP_TIMEOUT_SEC, CODEX_TOOL_TIMEOUT_SEC, None),
     }
@@ -445,7 +444,7 @@ fn json_entry_matches(value: &Value, command: &str, timeout_ms: Option<i64>) -> 
 // MARK: - TOML（Codex）：toml_edit 保留格式最小化编辑
 
 /// upsert `[mcp_servers.askhuman]`（command/args/startup_timeout_sec/tool_timeout_sec，
-/// Grok 额外写 `tool_timeouts = { ask = 86400 }`）。
+/// Grok 额外写 `tool_timeouts = { ask_human = 86400 }`）。
 fn apply_install_toml(target: AgentTarget, text: &str, command: &str) -> Result<String> {
     Ok(apply_install_toml_outcome(target, text, command)?.text)
 }
@@ -495,11 +494,11 @@ fn apply_install_toml_outcome(
     if target == AgentTarget::Codex && !entry.contains_key("approval_mode") {
         entry.insert("approval_mode", value("approve"));
     }
-    // Grok：per-tool 超时 `tool_timeouts = { ask = 86400 }`（内联表，对 Composer 更精准）。
+    // Grok：per-tool 超时（内联表，对 Composer 更精准）。
     match ask {
         Some(secs) => {
             let mut t = InlineTable::new();
-            t.insert("ask", TomlValue::from(secs));
+            t.insert("ask_human", TomlValue::from(secs));
             entry.insert("tool_timeouts", value(t));
         }
         None => {
@@ -683,13 +682,13 @@ fn toml_entry_matches(target: AgentTarget, text: &str, command: &str) -> bool {
         .unwrap_or(false);
     let startup_ok = entry.get("startup_timeout_sec").and_then(toml_int) == Some(startup);
     let tool_ok = entry.get("tool_timeout_sec").and_then(toml_int) == Some(tool);
-    // Grok 需精确匹配 `tool_timeouts.ask`（旧条目缺失 → 视为需更新）；Codex 不该有该键。
+    // Grok 需精确匹配 `tool_timeouts.ask_human`；Codex 不该有该键。
     let ask_ok = match ask {
         Some(secs) => {
             entry
                 .get("tool_timeouts")
                 .and_then(|i| i.as_table_like())
-                .and_then(|t| t.get("ask"))
+                .and_then(|t| t.get("ask_human"))
                 .and_then(toml_int)
                 == Some(secs)
         }
@@ -1075,10 +1074,10 @@ mod tests {
         assert!(apply_install_toml(CODEX, "[mcp_servers", EXE).is_err());
     }
 
-    // ── TOML（Grok：额外的 tool_timeouts.ask） ──
+    // ── TOML（Grok：额外的 tool_timeouts.ask_human） ──
 
     #[test]
-    fn grok_install_writes_ask_tool_timeout() {
+    fn grok_install_writes_ask_human_tool_timeout() {
         let out = apply_install_toml(GROK, "", EXE).unwrap();
         assert!(out.contains("[mcp_servers.askhuman]"));
         let doc = out.parse::<toml_edit::DocumentMut>().unwrap();
@@ -1097,9 +1096,9 @@ mod tests {
             entry
                 .get("tool_timeouts")
                 .and_then(|i| i.as_table_like())
-                .and_then(|t| t.get("ask"))
+                .and_then(|t| t.get("ask_human"))
                 .and_then(|v| v.as_integer()),
-            Some(GROK_ASK_TOOL_TIMEOUT_SEC)
+            Some(GROK_ASK_HUMAN_TOOL_TIMEOUT_SEC)
         );
         assert!(toml_entry_matches(GROK, &out, EXE));
     }
@@ -1113,7 +1112,7 @@ mod tests {
     }
 
     #[test]
-    fn grok_old_entry_without_ask_timeout_needs_update() {
+    fn grok_old_entry_without_ask_human_timeout_needs_update() {
         // 用 Codex 档写（无 tool_timeouts）后，按 Grok 预期校验应判需更新。
         let old = apply_install_toml(CODEX, "", EXE).unwrap();
         assert!(!toml_entry_matches(GROK, &old, EXE));
@@ -1131,7 +1130,7 @@ mod tests {
         assert!(toml_entry_matches(CODEX, &codex_float, EXE));
 
         let grok_float = format!(
-            "[mcp_servers.askhuman]\ncommand = \"{EXE}\"\nargs = [\"mcp\"]\nstartup_timeout_sec = 30.0\ntool_timeout_sec = 86400.0\ntool_timeouts = {{ ask = 86400.0 }}\n"
+            "[mcp_servers.askhuman]\ncommand = \"{EXE}\"\nargs = [\"mcp\"]\nstartup_timeout_sec = 30.0\ntool_timeout_sec = 86400.0\ntool_timeouts = {{ ask_human = 86400.0 }}\n"
         );
         assert!(toml_entry_matches(GROK, &grok_float, EXE));
     }

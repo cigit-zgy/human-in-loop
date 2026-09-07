@@ -602,6 +602,62 @@ pub fn run_confirm(task: crate::ipc::ConfirmTask) -> Option<crate::models::Confi
     })
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum ConfirmClientError {
+    #[error("human confirmation was cancelled by the MCP client")]
+    Cancelled,
+    #[error("human confirmation runtime is unavailable")]
+    Unavailable,
+    #[error("human confirmation ended without a decision: {0:?}")]
+    Fallback(crate::models::ConfirmFallbackReason),
+}
+
+/// Submit one structured confirmation while keeping the daemon socket owned by this future.
+/// Cancelling or dropping the future closes that socket; the daemon's existing EOF path then
+/// cancels the coordinator and reaps every request-owned channel watcher.
+pub async fn run_confirm_async(
+    task: crate::ipc::ConfirmTask,
+    cancel: tokio_util::sync::CancellationToken,
+) -> Result<crate::models::ConfirmResult, ConfirmClientError> {
+    tokio::select! {
+        biased;
+        _ = cancel.cancelled() => Err(ConfirmClientError::Cancelled),
+        result = run_confirm_connection(task) => result,
+    }
+}
+
+async fn run_confirm_connection(
+    task: crate::ipc::ConfirmTask,
+) -> Result<crate::models::ConfirmResult, ConfirmClientError> {
+    ensure_running()
+        .await
+        .map_err(|_| ConfirmClientError::Unavailable)?;
+    let (mut reader, mut writer) = connect_split()
+        .await
+        .map_err(|_| ConfirmClientError::Unavailable)?;
+    ipc::write_msg(&mut writer, &ClientMsg::Hello(hello()))
+        .await
+        .map_err(|_| ConfirmClientError::Unavailable)?;
+    match ipc::read_msg::<_, ServerMsg>(&mut reader).await {
+        Ok(Some(ServerMsg::HelloAck(ack))) if ack.status == HelloStatus::Ok => {}
+        _ => return Err(ConfirmClientError::Unavailable),
+    }
+    ipc::write_msg(&mut writer, &ClientMsg::SubmitConfirm(Box::new(task)))
+        .await
+        .map_err(|_| ConfirmClientError::Unavailable)?;
+    loop {
+        match ipc::read_msg::<_, ServerMsg>(&mut reader).await {
+            Ok(Some(ServerMsg::ConfirmAccepted { .. })) => {}
+            Ok(Some(ServerMsg::ConfirmFinal { result })) => return Ok(result),
+            Ok(Some(ServerMsg::ConfirmFallback { reason })) => {
+                return Err(ConfirmClientError::Fallback(reason))
+            }
+            Ok(Some(_)) => {}
+            Ok(None) | Err(_) => return Err(ConfirmClientError::Unavailable),
+        }
+    }
+}
+
 async fn read_confirm_frames<R>(reader: &mut R) -> Option<crate::models::ConfirmResult>
 where
     R: tokio::io::AsyncBufRead + Unpin,

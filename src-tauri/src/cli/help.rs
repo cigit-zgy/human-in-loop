@@ -56,7 +56,7 @@ pub fn help_text(lang: Lang) -> String {
             "  --todos                 Open the project todos window (preselects current project)".to_string(),
             "  daemon <sub>            Manage the background daemon: status/stop/restart/start/logs (stop/restart drain active requests; add --force to terminate now)".to_string(),
             "  update prepare          Windows: drain background processes before a manual update".to_string(),
-            "  mcp                     Run as an MCP server over STDIO, exposing ask, whats_next, show_last, todo_add, todo_list, and todo_update".to_string(),
+            "  mcp                     Run the local STDIO MCP server exposing only ask_human".to_string(),
             "  todo <sub>              Project todos: add [--auto] [-f path] <text> / list / attach / detach / rm / clear".to_string(),
             "  channel <sub>           Configure IM channels without a GUI (list/set/enable/disable/test/detect; see 'channel help')".to_string(),
             "  agents <sub>            Agent status & integrations (monitor/show/install/uninstall/update; see 'agents help')".to_string(),
@@ -94,7 +94,7 @@ pub fn help_text(lang: Lang) -> String {
             "  --todos                 启动项目待办窗口（预选当前项目）".to_string(),
             "  daemon <子命令>          管理后台 daemon：status/stop/restart/start/logs（stop/restart 默认等在途请求完结；--force 立即终止）".to_string(),
             "  update prepare          Windows：手动更新前排空并关闭后台进程".to_string(),
-            "  mcp                     以 MCP server（STDIO）运行，暴露 ask、whats_next、show_last、todo_add、todo_list 与 todo_update".to_string(),
+            "  mcp                     运行本地 STDIO MCP server，仅暴露 ask_human".to_string(),
             "  todo <子命令>            项目待办：add [--auto] [-f 路径] <文本> / list / attach / detach / rm / clear".to_string(),
             "  channel <子命令>         无 GUI 配置 IM 渠道（list/set/enable/disable/test/detect；见 'channel help'）".to_string(),
             "  agents <子命令>          Agent 状态与集成（monitor/show/install/uninstall/update；见 'agents help'）".to_string(),
@@ -506,12 +506,13 @@ mod tests {
     }
 
     #[test]
-    fn help_and_agent_help_cover_context_recovery_in_both_languages() {
+    fn help_covers_cli_context_recovery_and_the_single_mcp_tool() {
         for lang in [Lang::En, Lang::Zh] {
             let help = help_text(lang);
             let agent = agent_help_text(lang);
             assert!(help.contains("--show-last"));
-            assert!(help.contains("show_last"));
+            assert!(help.contains("ask_human"));
+            assert!(!help.contains("show_last"));
             assert!(agent.contains("--show-last"));
         }
     }

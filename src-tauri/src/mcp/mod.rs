@@ -1,17 +1,51 @@
-//! `AskHuman mcp`：以 STDIO 运行 MCP server，暴露 `ask`、`whats_next`、`show_last` 与 `todo_add`。
+//! Local STDIO MCP server exposing only the bounded `ask_human` mutation.
 //!
-//! `ask` / `whats_next` 为「薄壳」：每次工具调用都 spawn 一个现有的 `AskHuman …` 子进程（`ask` 带
-//! `--output json`，`whats_next` 走文本模式），
-//! 复用全部既有 ask 流程（弹窗 / IM / 抢答 / 历史 / 落盘 / 排空与自动重连），再把人类回复中的
-//! 图片读回转成 MCP `ImageContent` 一并返回。`todo_add` 在 MCP 进程内直写 `todos.json`。
-//! 全平台同一套；daemon 换新 / 重启后下一次 ask/whats_next 调用自动重连
-//! （每次调用都是新起子进程、重新连接 daemon，因此 MCP server 进程可长期存活、跨 daemon 重启）。
+//! The handler submits the existing structured `ConfirmTask` IPC request and therefore reuses the
+//! daemon's canonical coordinator and configured Feishu/iMessage sessions. The input stream is
+//! cancellation-aware so a client disconnect reaches the same request-owned cleanup path as an
+//! explicit MCP cancellation.
 
 pub(crate) mod ask;
+pub(crate) mod human;
 
 use rmcp::{transport::stdio, ServiceExt};
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use tokio::io::{AsyncRead, ReadBuf};
+use tokio_util::sync::CancellationToken;
 
-// （`whats_next` 见 spec todo-whats-next D2：完成任务后必调，结果为下一个任务或「准许结束」。）
+struct CancelOnEof<R> {
+    inner: R,
+    cancel: CancellationToken,
+}
+
+impl<R> CancelOnEof<R> {
+    fn new(inner: R, cancel: CancellationToken) -> Self {
+        Self { inner, cancel }
+    }
+}
+
+impl<R: AsyncRead + Unpin> AsyncRead for CancelOnEof<R> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let before = buf.filled().len();
+        let can_read = buf.remaining() > 0;
+        match Pin::new(&mut self.inner).poll_read(cx, buf) {
+            Poll::Ready(Ok(())) if can_read && buf.filled().len() == before => {
+                self.cancel.cancel();
+                Poll::Ready(Ok(()))
+            }
+            Poll::Ready(Err(error)) => {
+                self.cancel.cancel();
+                Poll::Ready(Err(error))
+            }
+            other => other,
+        }
+    }
+}
 
 /// 进入 STDIO MCP server 事件循环（不返回）。
 pub fn run() -> ! {
@@ -29,18 +63,21 @@ pub fn run() -> ! {
 async fn serve() -> i32 {
     #[cfg(windows)]
     let parent = mcp_parent_process();
-    let server = ask::AskServer::new();
-    server.register_instance().await;
-    match server.serve(stdio()).await {
+    let server = human::AskHumanServer::new();
+    let shutdown = server.shutdown_token();
+    let (input, output) = stdio();
+    match server
+        .serve((CancelOnEof::new(input, shutdown), output))
+        .await
+    {
         Ok(service) => {
             #[cfg(windows)]
             let parent_watcher = parent.map(|parent| {
                 let cancellation = service.cancellation_token();
                 tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
                     wait_for_parent_exit(&parent).await;
-                    // Cancelling the rmcp service also cancels every request child token. The ask
-                    // handler then drops its kill-on-drop CLI child, producing the daemon socket
-                    // EOF that finalizes popup and IM cancellation before this process exits.
+                    // Cancelling the rmcp service also cancels every request child token. The
+                    // handler drops its daemon connection, which finalizes channel cleanup.
                     cancellation.cancel();
                 }))
             });
