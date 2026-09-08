@@ -2,13 +2,13 @@
 //!
 //! When the process cwd sits under a worktree that has been `dev enable`d
 //! (marker: `<root>/.askhuman-dev/enabled`), the CLI routes data and (when
-//! present) re-execs into that tree's isolated binary + `ASKHUMAN_HOME`.
+//! present) re-execs into that tree's isolated binary + `HUMAN_IN_LOOP_HOME`.
 //! See `docs/specs/dev-instance-parallel.md`.
 
 use std::path::{Path, PathBuf};
 
 /// Env var: overrides `paths::config_dir()` (instance home root).
-pub const ASKHUMAN_HOME_ENV: &str = "ASKHUMAN_HOME";
+pub const HUMAN_IN_LOOP_HOME_ENV: &str = "HUMAN_IN_LOOP_HOME";
 
 /// Marker file created by `dev enable` under the worktree root.
 pub const ENABLED_MARKER: &str = "enabled";
@@ -16,9 +16,9 @@ pub const ENABLED_MARKER: &str = "enabled";
 /// Relative directory name under the worktree root.
 pub const DEV_DIR: &str = ".askhuman-dev";
 
-/// Whether this process is running in a Dev Instance (non-empty `ASKHUMAN_HOME`).
+/// Whether this process is running in a Dev Instance (non-empty `HUMAN_IN_LOOP_HOME`).
 pub fn is_dev_instance() -> bool {
-    std::env::var_os(ASKHUMAN_HOME_ENV).is_some_and(|v| !v.is_empty())
+    std::env::var_os(HUMAN_IN_LOOP_HOME_ENV).is_some_and(|v| !v.is_empty())
 }
 
 /// Walk upward from `start` looking for `<ancestor>/.askhuman-dev/enabled`.
@@ -47,9 +47,9 @@ pub fn instance_home(root: &Path) -> PathBuf {
 /// Instance binary path for a worktree root.
 pub fn instance_bin(root: &Path) -> PathBuf {
     let name = if cfg!(windows) {
-        "AskHuman.exe"
+        "human-in-loop.exe"
     } else {
-        "AskHuman"
+        "human-in-loop"
     };
     root.join(DEV_DIR).join("bin").join(name)
 }
@@ -114,7 +114,7 @@ pub fn maybe_enter_dev_instance() {
     // Data plane: always pin instance home + no main keychain for this process.
     // SAFETY: single-threaded at process entry before other threads; std::env::set_var is the
     // established pattern for CLI bootstrap in this codebase (see spawn env pass-through).
-    std::env::set_var(ASKHUMAN_HOME_ENV, &home);
+    std::env::set_var(HUMAN_IN_LOOP_HOME_ENV, &home);
     std::env::set_var("ASKHUMAN_NO_KEYCHAIN", "1");
 
     let bin_exists = bin.is_file();
@@ -159,7 +159,7 @@ fn reexec_into(bin: &Path, home: &Path, argv: &[String]) -> ! {
         use std::os::unix::process::CommandExt;
         let err = std::process::Command::new(bin)
             .args(&args)
-            .env(ASKHUMAN_HOME_ENV, home)
+            .env(HUMAN_IN_LOOP_HOME_ENV, home)
             .env("ASKHUMAN_NO_KEYCHAIN", "1")
             .exec();
         eprintln!(
@@ -172,7 +172,7 @@ fn reexec_into(bin: &Path, home: &Path, argv: &[String]) -> ! {
     {
         let status = std::process::Command::new(bin)
             .args(&args)
-            .env(ASKHUMAN_HOME_ENV, home)
+            .env(HUMAN_IN_LOOP_HOME_ENV, home)
             .env("ASKHUMAN_NO_KEYCHAIN", "1")
             .status();
         match status {
@@ -210,7 +210,7 @@ mod tests {
     #[test]
     fn classify_command_matrix() {
         let prog = |rest: &[&str]| {
-            let mut v = vec!["AskHuman".into()];
+            let mut v = vec!["human-in-loop".into()];
             v.extend(rest.iter().map(|s| (*s).to_string()));
             v
         };

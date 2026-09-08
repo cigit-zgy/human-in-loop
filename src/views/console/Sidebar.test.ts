@@ -19,7 +19,7 @@ const record = (overrides: Partial<AgentRecord>): AgentRecord => ({
 describe("Agent console Sidebar", () => {
   beforeEach(() => {
     i18n.global.locale.value = "zh";
-    localStorage.clear();
+    window.localStorage.clear();
   });
 
   it("distinguishes a forked session with its direct parent sequence", () => {

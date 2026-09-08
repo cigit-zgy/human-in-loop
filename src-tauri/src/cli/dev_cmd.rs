@@ -145,7 +145,7 @@ fn cmd_enable(args: &[String]) {
     };
 
     // Pin env so subsequent logic in this process uses instance home (also for preset materialise).
-    std::env::set_var(dev_instance::ASKHUMAN_HOME_ENV, &home);
+    std::env::set_var(dev_instance::HUMAN_IN_LOOP_HOME_ENV, &home);
     std::env::set_var("ASKHUMAN_NO_KEYCHAIN", "1");
 
     if !presets.is_empty() {
@@ -204,7 +204,7 @@ fn cmd_disable(args: &[String]) {
     };
 
     let home = dev_instance::instance_home(&root);
-    std::env::set_var(dev_instance::ASKHUMAN_HOME_ENV, &home);
+    std::env::set_var(dev_instance::HUMAN_IN_LOOP_HOME_ENV, &home);
     std::env::set_var("ASKHUMAN_NO_KEYCHAIN", "1");
 
     // Best-effort stop the daemon in this instance partition before removing its marker/data.
@@ -366,7 +366,7 @@ fn cmd_status() {
         Some(root) => {
             let home = dev_instance::instance_home(&root);
             let bin = dev_instance::instance_bin(&root);
-            std::env::set_var(dev_instance::ASKHUMAN_HOME_ENV, &home);
+            std::env::set_var(dev_instance::HUMAN_IN_LOOP_HOME_ENV, &home);
             std::env::set_var("ASKHUMAN_NO_KEYCHAIN", "1");
 
             println!("dev instance: enabled");
@@ -517,7 +517,7 @@ fn preset_save(args: &[String]) {
         exit(1);
     };
     let home = dev_instance::instance_home(&root);
-    std::env::set_var(dev_instance::ASKHUMAN_HOME_ENV, &home);
+    std::env::set_var(dev_instance::HUMAN_IN_LOOP_HOME_ENV, &home);
     std::env::set_var("ASKHUMAN_NO_KEYCHAIN", "1");
 
     let cfg = AppConfig::load();

@@ -8,7 +8,7 @@
 // Usage:
 //   node scripts/perf-markdown-message.mjs
 //   node scripts/perf-markdown-message.mjs --sample docs/overview.md
-//   node scripts/perf-markdown-message.mjs --bin ./src-tauri/target/release/AskHuman
+//   node scripts/perf-markdown-message.mjs --bin ./src-tauri/target/release/human-in-loop
 //   node scripts/perf-markdown-message.mjs --keep-home
 
 import { spawn, spawnSync } from "node:child_process";
@@ -84,7 +84,7 @@ function resolveBin(explicit) {
   const candidates = [];
   if (explicit) candidates.push(explicit);
   if (process.env.ASKHUMAN_BIN) candidates.push(process.env.ASKHUMAN_BIN);
-  candidates.push(join(homedir(), ".local", "bin", "AskHuman"));
+  candidates.push(join(homedir(), ".local", "bin", "human-in-loop"));
   candidates.push(join(REPO_ROOT, "src-tauri", "target", "release", "AskHuman"));
   for (const candidate of candidates) {
     if (candidate && existsSync(candidate)) return candidate;

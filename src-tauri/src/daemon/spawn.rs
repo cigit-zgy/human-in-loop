@@ -135,7 +135,7 @@ fn spawn_plain_detached() -> std::io::Result<()> {
 // ===== macOS：经 GUI launchd 域拉起 =====
 
 #[cfg(target_os = "macos")]
-const DAEMON_LAUNCHD_LABEL: &str = "com.naituw.humaninloop.daemon";
+const DAEMON_LAUNCHD_LABEL: &str = "io.github.cigit-zgy.human-in-loop.daemon";
 
 /// Production 沿用登录项的固定 label；Dev Instance 按配置目录生成稳定后缀，避免多个工作树以及
 /// production daemon 在同一个 `gui/<uid>` domain 内互相 bootout。
@@ -158,7 +158,7 @@ fn launchd_label(config_dir: &std::path::Path, isolated: bool) -> String {
 
 /// 经 `gui/<uid>` launchd 域 bootstrap 一个跑 `daemon run` 的任务，使 daemon 落在 Aqua 会话。
 ///
-/// 透传 HOME / TMPDIR / PATH 及全部 `ASKHUMAN_*` 环境变量，保住 perf/隔离调用方（隔离 HOME、
+/// 透传 HOME / TMPDIR / PATH 及全部 runtime 环境变量，保住 perf/隔离调用方（隔离 HOME、
 /// `ASKHUMAN_NO_KEYCHAIN`、mock API base 等）的语义。成功返回 `Ok(())`，否则 `Err`（调用方回退）。
 #[cfg(target_os = "macos")]
 fn spawn_via_gui_launchd() -> std::io::Result<()> {
@@ -185,7 +185,7 @@ fn spawn_via_gui_launchd() -> std::io::Result<()> {
         }
     }
     for (k, v) in std::env::vars() {
-        if k.starts_with("ASKHUMAN_") {
+        if k.starts_with("HUMAN_IN_LOOP_") || k.starts_with("ASKHUMAN_") {
             env_xml.push_str(&plist_env_entry(&k, &v));
         }
     }
@@ -296,10 +296,10 @@ mod tests {
     #[test]
     fn launchd_plist_binds_daemon_to_interactive_gui_job() {
         let plist = launchd_plist_contents(
-            "/Applications/A&B/AskHuman",
+            "/Applications/A&B/human-in-loop",
             "/Users/test/log<1>",
             DAEMON_LAUNCHD_LABEL,
-            "        <key>ASKHUMAN_HOME</key>\n        <string>/tmp/dev</string>\n",
+            "        <key>HUMAN_IN_LOOP_HOME</key>\n        <string>/tmp/dev</string>\n",
         );
 
         assert!(plist.contains(&format!("<string>{DAEMON_LAUNCHD_LABEL}</string>")));
@@ -307,9 +307,9 @@ mod tests {
         assert!(plist.contains("<string>run</string>"));
         assert!(plist.contains("<key>RunAtLoad</key>"));
         assert!(plist.contains("<string>Interactive</string>"));
-        assert!(plist.contains("/Applications/A&amp;B/AskHuman"));
+        assert!(plist.contains("/Applications/A&amp;B/human-in-loop"));
         assert!(plist.contains("/Users/test/log&lt;1&gt;"));
-        assert!(plist.contains("<key>ASKHUMAN_HOME</key>"));
+        assert!(plist.contains("<key>HUMAN_IN_LOOP_HOME</key>"));
         assert!(!plist.contains("<key>KeepAlive</key>"));
     }
 }

@@ -60,7 +60,7 @@ fn dd_watch_poc(args: &[String]) {
 
     println!("dd-watch-poc: template={template} count={count} interval={interval_ms}ms");
     println!("note: 若 daemon 正在运行，按钮回调可能被 daemon 的连接抢走（钉钉多连接轮询分发）；");
-    println!("      验证按钮回调前建议先 `AskHuman daemon stop`。");
+    println!("      验证按钮回调前建议先 `human-in-loop daemon stop`。");
 
     exit(cfgio::block_on(run_poc(
         client,

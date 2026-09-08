@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Actual stdio MCP client → installed binary → production daemon/coordinator → synthetic imsg.
-// Usage: node scripts/mcp-verify.mjs /absolute/path/to/installed/AskHuman /absolute/task/scratch
+// Usage: node scripts/mcp-verify.mjs /absolute/path/to/installed/human-in-loop /absolute/task/scratch
 // No test path can reach the real imsg executable or the user's channel configuration.
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
@@ -29,7 +29,7 @@ fs.writeFileSync(path.join(configDir, 'config.json'), JSON.stringify({
   channels: { autoActivation: false, feishu: { enabled: false },
     imessage: { enabled: true, recipient: 'synthetic@example.invalid', identityMode: 'same_account', chatId: 42, chatGuid: 'synthetic-direct-chat' } },
 }));
-const env = { ...process.env, ASKHUMAN_HOME: configDir, ASKHUMAN_NO_KEYCHAIN: '1',
+const env = { ...process.env, HUMAN_IN_LOOP_HOME: configDir, ASKHUMAN_NO_KEYCHAIN: '1',
   ASKHUMAN_MCP_VERIFY_DIR: root, TMPDIR: tempDir,
   PATH: `${binDir}:${path.dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin` };
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

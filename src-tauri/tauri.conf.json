@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "AskHuman",
+  "productName": "human-in-loop",
   "version": "0.13.1",
-  "identifier": "com.naituw.humaninloop",
+  "identifier": "io.github.cigit-zgy.human-in-loop",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5180",

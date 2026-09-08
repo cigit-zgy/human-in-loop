@@ -9,7 +9,7 @@ use crate::i18n::Lang;
 use std::path::Path;
 
 /// 用于帮助文案的程序名，取自 argv[0] 的 basename。
-/// 为空或异常时回退到 "AskHuman"。这样任何包装器/软链/改名调用
+/// 为空或异常时回退到 "human-in-loop"。这样任何包装器/软链/改名调用
 /// 都会显示对应的名字，无需调用方额外配合。
 pub fn program_name() -> String {
     program_name_from(std::env::args().next().as_deref())
@@ -25,7 +25,7 @@ fn program_name_from(arg0: Option<&str>) -> String {
                 .unwrap_or_else(|| s.to_string())
         })
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "AskHuman".to_string())
+        .unwrap_or_else(|| "human-in-loop".to_string())
 }
 
 /// `--help`：完整功能，按「提问 / 管理 / 帮助」三块组织（spec §4.1）。
@@ -52,11 +52,11 @@ pub fn help_text(lang: Lang) -> String {
             "Management:".to_string(),
             "  --settings              Open the settings window".to_string(),
             "  --history [--all]       Open the reply history window (current project; --all for every project)".to_string(),
-            "  --show-last [N]         Print recent completed AskHuman exchange(s) for this Agent session (N=1–10, default 1)".to_string(),
+            "  --show-last [N]         Print recent completed human-in-loop exchange(s) for this Agent session (N=1–10, default 1)".to_string(),
             "  --todos                 Open the project todos window (preselects current project)".to_string(),
             "  daemon <sub>            Manage the background daemon: status/stop/restart/start/logs (stop/restart drain active requests; add --force to terminate now)".to_string(),
             "  update prepare          Windows: drain background processes before a manual update".to_string(),
-            "  mcp                     Run the local STDIO MCP server exposing only ask_human".to_string(),
+            "  mcp                     Run the local STDIO MCP server exposing ask_human and notify_human".to_string(),
             "  todo <sub>              Project todos: add [--auto] [-f path] <text> / list / attach / detach / rm / clear".to_string(),
             "  channel <sub>           Configure IM channels without a GUI (list/set/enable/disable/test/detect; see 'channel help')".to_string(),
             "  agents <sub>            Agent status & integrations (monitor/show/install/uninstall/update; see 'agents help')".to_string(),
@@ -90,11 +90,11 @@ pub fn help_text(lang: Lang) -> String {
             "管理:".to_string(),
             "  --settings              启动设置界面".to_string(),
             "  --history [--all]       启动回复历史窗口（默认当前项目；--all 查看全部项目）".to_string(),
-            "  --show-last [N]         输出当前 Agent 会话最近 N 条已完成 AskHuman 问答（N=1–10，默认 1）".to_string(),
+            "  --show-last [N]         输出当前 Agent 会话最近 N 条已完成 human-in-loop 问答（N=1–10，默认 1）".to_string(),
             "  --todos                 启动项目待办窗口（预选当前项目）".to_string(),
             "  daemon <子命令>          管理后台 daemon：status/stop/restart/start/logs（stop/restart 默认等在途请求完结；--force 立即终止）".to_string(),
             "  update prepare          Windows：手动更新前排空并关闭后台进程".to_string(),
-            "  mcp                     运行本地 STDIO MCP server，仅暴露 ask_human".to_string(),
+            "  mcp                     运行本地 STDIO MCP server，暴露 ask_human 与 notify_human".to_string(),
             "  todo <子命令>            项目待办：add [--auto] [-f 路径] <文本> / list / attach / detach / rm / clear".to_string(),
             "  channel <子命令>         无 GUI 配置 IM 渠道（list/set/enable/disable/test/detect；见 'channel help'）".to_string(),
             "  agents <子命令>          Agent 状态与集成（monitor/show/install/uninstall/update；见 'agents help'）".to_string(),
@@ -243,7 +243,7 @@ pub fn agent_help_text(lang: Lang) -> String {
             ));
             out.push("  Run only after the current task is fully complete, to request a separate next task.".to_string());
             out.push(
-                "  Use normal AskHuman questions for anything within the current task. The user"
+                "  Use normal human-in-loop questions for anything within the current task. The user"
                     .to_string(),
             );
             out.push(
@@ -262,7 +262,7 @@ pub fn agent_help_text(lang: Lang) -> String {
             out.push(String::new());
             out.push("Context-compaction recovery:".to_string());
             out.push(format!(
-                "  Run {prog} --show-last after summarization, or whenever the exact last AskHuman question/answer is uncertain."
+                "  Run {prog} --show-last after summarization, or whenever the exact last human-in-loop question/answer is uncertain."
             ));
         }
         Lang::Zh => {
@@ -315,7 +315,7 @@ pub fn agent_help_text(lang: Lang) -> String {
                     .to_string(),
             );
             out.push(
-                "  问题都用普通 AskHuman 提问。用户会给出下一个任务（立即开始执行），或确认"
+                "  问题都用普通 human-in-loop 提问。用户会给出下一个任务（立即开始执行），或确认"
                     .to_string(),
             );
             out.push(
@@ -326,7 +326,7 @@ pub fn agent_help_text(lang: Lang) -> String {
             out.push(String::new());
             out.push("上下文压缩恢复:".to_string());
             out.push(format!(
-                "  被摘要后，或不确定上一次 AskHuman 问答的精确内容时，运行 {prog} --show-last。"
+                "  被摘要后，或不确定上一次 human-in-loop 问答的精确内容时，运行 {prog} --show-last。"
             ));
         }
     }
@@ -419,7 +419,7 @@ pub fn scripting_help_text(lang: Lang) -> String {
 }
 
 pub fn version_text() -> String {
-    format!("AskHuman v{}", env!("CARGO_PKG_VERSION"))
+    format!("human-in-loop v{}", env!("CARGO_PKG_VERSION"))
 }
 
 #[cfg(test)]
@@ -429,23 +429,23 @@ mod tests {
     #[test]
     fn derives_basename_from_path() {
         assert_eq!(
-            program_name_from(Some("/usr/local/bin/AskHuman")),
-            "AskHuman"
+            program_name_from(Some("/usr/local/bin/human-in-loop")),
+            "human-in-loop"
         );
-        assert_eq!(program_name_from(Some("./AskHuman")), "AskHuman");
+        assert_eq!(program_name_from(Some("./human-in-loop")), "human-in-loop");
     }
 
     #[test]
     fn keeps_name_without_separator() {
-        assert_eq!(program_name_from(Some("AskHuman")), "AskHuman");
+        assert_eq!(program_name_from(Some("human-in-loop")), "human-in-loop");
         assert_eq!(program_name_from(Some("wblra ask")), "wblra ask");
     }
 
     #[test]
     fn falls_back_when_missing_or_empty() {
-        assert_eq!(program_name_from(None), "AskHuman");
-        assert_eq!(program_name_from(Some("")), "AskHuman");
-        assert_eq!(program_name_from(Some("   ")), "AskHuman");
+        assert_eq!(program_name_from(None), "human-in-loop");
+        assert_eq!(program_name_from(Some("")), "human-in-loop");
+        assert_eq!(program_name_from(Some("   ")), "human-in-loop");
     }
 
     #[test]
@@ -506,12 +506,13 @@ mod tests {
     }
 
     #[test]
-    fn help_covers_cli_context_recovery_and_the_single_mcp_tool() {
+    fn help_covers_cli_context_recovery_and_the_mcp_tools() {
         for lang in [Lang::En, Lang::Zh] {
             let help = help_text(lang);
             let agent = agent_help_text(lang);
             assert!(help.contains("--show-last"));
             assert!(help.contains("ask_human"));
+            assert!(help.contains("notify_human"));
             assert!(!help.contains("show_last"));
             assert!(agent.contains("--show-last"));
         }

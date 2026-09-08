@@ -91,7 +91,7 @@ fn now_ms() -> u64 {
 }
 
 fn log(msg: &str) {
-    let line = format!("[askhuman-daemon {}] {}\n", now_secs(), msg);
+    let line = format!("[human-in-loop-daemon {}] {}\n", now_secs(), msg);
     #[cfg(windows)]
     if BACKGROUND_LOG_TO_FILE.load(Ordering::Relaxed) {
         use std::io::Write;
@@ -146,13 +146,13 @@ pub fn dispatch(args: &[String]) -> i32 {
         "logs" => logs_cmd(),
         "" => {
             eprintln!(
-                "usage: AskHuman daemon <run|start|stop [--force]|restart [--force]|status|logs>"
+                "usage: human-in-loop daemon <run|start|stop [--force]|restart [--force]|status|logs>"
             );
             1
         }
         other => {
             eprintln!("unknown daemon subcommand: {}", other);
-            eprintln!("usage: AskHuman daemon <run|start|stop|restart|status|logs>");
+            eprintln!("usage: human-in-loop daemon <run|start|stop|restart|status|logs>");
             1
         }
     }
@@ -4029,7 +4029,7 @@ fn start_cmd() -> i32 {
             Ok(()) => {
                 match client::request_status().await {
                     Some(info) => print_status(&info),
-                    None => println!("askhuman daemon: running"),
+                    None => println!("human-in-loop daemon: running"),
                 }
                 0
             }
@@ -4044,12 +4044,12 @@ fn start_cmd() -> i32 {
 fn stop_cmd(force: bool) -> i32 {
     block_on(async {
         if !client::request_stop(force).await {
-            println!("askhuman daemon: not running");
+            println!("human-in-loop daemon: not running");
             return 0;
         }
-        println!("askhuman daemon: stopping");
+        println!("human-in-loop daemon: stopping");
         wait_stopped(force).await;
-        println!("askhuman daemon: stopped");
+        println!("human-in-loop daemon: stopped");
         0
     })
 }
@@ -4061,7 +4061,7 @@ fn restart_cmd(force: bool) -> i32 {
         }
         match client::ensure_running().await {
             Ok(()) => {
-                println!("askhuman daemon: restarted");
+                println!("human-in-loop daemon: restarted");
                 0
             }
             Err(e) => {
@@ -4086,7 +4086,7 @@ async fn wait_stopped(force: bool) {
         };
         if info.draining && last_hint.is_none_or(|t| t.elapsed() >= Duration::from_secs(30)) {
             eprintln!(
-                "askhuman daemon: draining ({} active request(s) left); waiting… (use --force to terminate now)",
+                "human-in-loop daemon: draining ({} active request(s) left); waiting… (use --force to terminate now)",
                 info.active_requests
             );
             last_hint = Some(Instant::now());
@@ -4103,7 +4103,7 @@ fn status_cmd() -> i32 {
                 0
             }
             None => {
-                println!("askhuman daemon: not running");
+                println!("human-in-loop daemon: not running");
                 1
             }
         }
@@ -4118,7 +4118,7 @@ fn logs_cmd() -> i32 {
 }
 
 fn print_status(info: &StatusInfo) {
-    println!("askhuman daemon: running");
+    println!("human-in-loop daemon: running");
     println!("  pid        {}", info.pid);
     println!(
         "  version    {} (protocol {})",

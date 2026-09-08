@@ -12,7 +12,7 @@ Feishu retains its long-connection and interactive-card flow. Apple Messages sup
 
 ## Local MCP interface
 
-Configure an MCP client to launch the installed `AskHuman` executable with the argument `mcp`. The server uses local stdio and exposes exactly two tools: `ask_human` for blocking decisions and `notify_human` for informational dispatch through the configured channels.
+Configure an MCP client to launch the installed `human-in-loop` executable with the argument `mcp`. The server uses local stdio and exposes exactly two tools: `ask_human` for blocking decisions and `notify_human` for informational dispatch through the configured channels.
 
 `ask_human` requires `source_agent`, `question`, and 2–6 `choices`, each with a unique stable `id` and compact `label`. Supply `repository_path` for every repository-associated decision; the server resolves the GitHub origin locally and displays its repository slug, such as `Codex · human-in-loop`. Optional fields are `context`, `recommended_choice` (a choice id), and `request_id`.
 

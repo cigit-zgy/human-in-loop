@@ -85,7 +85,7 @@ function printHelp() {
 function resolveBin() {
   const candidates = [];
   if (process.env.ASKHUMAN_BIN) candidates.push(process.env.ASKHUMAN_BIN);
-  candidates.push(join(homedir(), ".local", "bin", "AskHuman"));
+  candidates.push(join(homedir(), ".local", "bin", "human-in-loop"));
   for (const c of candidates) {
     if (c && existsSync(c)) return c;
   }

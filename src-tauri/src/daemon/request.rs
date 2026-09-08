@@ -328,7 +328,7 @@ fn memory_finalizer(
         if let Some(write) = &save.native {
             if let Err(error) = crate::permission_rules::apply_native_write(write) {
                 eprintln!(
-                    "[askhuman-daemon] native permission write failed ({error}); degrading {} to approve_once",
+                    "[human-in-loop-daemon] native permission write failed ({error}); degrading {} to approve_once",
                     save.action_id
                 );
                 save_failed.store(true, Ordering::SeqCst);
@@ -336,7 +336,7 @@ fn memory_finalizer(
                 return result;
             }
             eprintln!(
-                "[askhuman-daemon] native permission write applied for {}",
+                "[human-in-loop-daemon] native permission write applied for {}",
                 save.action_id
             );
         }
@@ -346,7 +346,7 @@ fn memory_finalizer(
         match crate::permission_rules::save_rules(&session_id, save.namespace, &save.rules) {
             Ok(()) => {
                 eprintln!(
-                    "[askhuman-daemon] permission memory saved: session={} action={} rules={}",
+                    "[human-in-loop-daemon] permission memory saved: session={} action={} rules={}",
                     session_id,
                     save.action_id,
                     save.rules.len()
@@ -356,13 +356,13 @@ fn memory_finalizer(
                 // The durable native write already succeeded; a failed session bridge only
                 // means this conversation may be asked again. Keep the chosen action.
                 eprintln!(
-                    "[askhuman-daemon] session bridge save failed ({error:?}) after native write for {}",
+                    "[human-in-loop-daemon] session bridge save failed ({error:?}) after native write for {}",
                     save.action_id
                 );
             }
             Err(error) => {
                 eprintln!(
-                    "[askhuman-daemon] permission memory save failed ({error:?}); degrading {} to approve_once",
+                    "[human-in-loop-daemon] permission memory save failed ({error:?}); degrading {} to approve_once",
                     save.action_id
                 );
                 save_failed.store(true, Ordering::SeqCst);

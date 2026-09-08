@@ -7,10 +7,10 @@ pub fn home() -> PathBuf {
     dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
-/// 配置目录：默认 `~/.askhuman`；若设置了非空 `ASKHUMAN_HOME` 则用该路径
+/// 配置目录：默认 `~/.human-in-loop`；若设置了非空 `HUMAN_IN_LOOP_HOME` 则用该路径
 /// （Dev Instance / 测试隔离，见 `dev_instance` 与 `docs/specs/dev-instance-parallel.md`）。
 pub fn config_dir() -> PathBuf {
-    if let Ok(raw) = std::env::var(crate::dev_instance::ASKHUMAN_HOME_ENV) {
+    if let Ok(raw) = std::env::var(crate::dev_instance::HUMAN_IN_LOOP_HOME_ENV) {
         if !raw.is_empty() {
             let p = PathBuf::from(raw);
             if p.is_absolute() {
@@ -21,7 +21,7 @@ pub fn config_dir() -> PathBuf {
                 .join(p);
         }
     }
-    home().join(".askhuman")
+    home().join(".human-in-loop")
 }
 
 /// 旧版配置目录 `~/.humaninloop`（仅用于向后兼容读取；Dev Instance 模式不回退到此）。
@@ -45,9 +45,9 @@ pub fn legacy_config_file() -> PathBuf {
     legacy_config_dir().join("config.json")
 }
 
-/// 本次请求的图片落盘目录 `temp/askhuman/<request_id>/`。
+/// 本次请求的图片落盘目录 `temp/human-in-loop/<request_id>/`。
 pub fn request_temp_dir(request_id: &str) -> PathBuf {
-    std::env::temp_dir().join("askhuman").join(request_id)
+    std::env::temp_dir().join("human-in-loop").join(request_id)
 }
 
 /// Managed original files and thumbnail caches owned by project todos.
@@ -343,28 +343,28 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
-    // env mutations must not run concurrently with other tests that touch ASKHUMAN_HOME.
+    // env mutations must not run concurrently with other tests that touch HUMAN_IN_LOOP_HOME.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
-    fn config_dir_respects_askhuman_home() {
+    fn config_dir_respects_human_in_loop_home() {
         let _g = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
-        let prev = std::env::var_os(crate::dev_instance::ASKHUMAN_HOME_ENV);
-        let custom = std::env::temp_dir().join("askhuman-home-test-xyz");
-        std::env::set_var(crate::dev_instance::ASKHUMAN_HOME_ENV, &custom);
+        let prev = std::env::var_os(crate::dev_instance::HUMAN_IN_LOOP_HOME_ENV);
+        let custom = std::env::temp_dir().join("human-in-loop-home-test-xyz");
+        std::env::set_var(crate::dev_instance::HUMAN_IN_LOOP_HOME_ENV, &custom);
         assert_eq!(config_dir(), custom);
         match prev {
-            Some(v) => std::env::set_var(crate::dev_instance::ASKHUMAN_HOME_ENV, v),
-            None => std::env::remove_var(crate::dev_instance::ASKHUMAN_HOME_ENV),
+            Some(v) => std::env::set_var(crate::dev_instance::HUMAN_IN_LOOP_HOME_ENV, v),
+            None => std::env::remove_var(crate::dev_instance::HUMAN_IN_LOOP_HOME_ENV),
         }
     }
 
     #[test]
     fn dev_presets_dir_not_under_askhuman_home() {
         let _g = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
-        let prev = std::env::var_os(crate::dev_instance::ASKHUMAN_HOME_ENV);
+        let prev = std::env::var_os(crate::dev_instance::HUMAN_IN_LOOP_HOME_ENV);
         std::env::set_var(
-            crate::dev_instance::ASKHUMAN_HOME_ENV,
+            crate::dev_instance::HUMAN_IN_LOOP_HOME_ENV,
             std::env::temp_dir().join("instance-home-only"),
         );
         assert_eq!(
@@ -373,8 +373,8 @@ mod tests {
         );
         assert_ne!(dev_presets_dir(), config_dir().join("dev-presets"));
         match prev {
-            Some(v) => std::env::set_var(crate::dev_instance::ASKHUMAN_HOME_ENV, v),
-            None => std::env::remove_var(crate::dev_instance::ASKHUMAN_HOME_ENV),
+            Some(v) => std::env::set_var(crate::dev_instance::HUMAN_IN_LOOP_HOME_ENV, v),
+            None => std::env::remove_var(crate::dev_instance::HUMAN_IN_LOOP_HOME_ENV),
         }
     }
 }

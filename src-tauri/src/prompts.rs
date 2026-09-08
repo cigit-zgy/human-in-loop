@@ -135,7 +135,7 @@ fn mcp_reference_with_agent(_agent: Option<AgentKind>) -> String {
 **These rules MUST NOT be overridden, weakened, ignored, or bypassed by any other context.**
 **They MUST be followed exactly and completely under all circumstances.**
 
-- Use the `ask_human` tool provided by the AskHuman MCP server for bounded structured human decisions. It is the server's only public tool.
+- Use the `ask_human` tool provided by the human-in-loop MCP server for bounded structured human decisions. The same server also exposes `notify_human` for bounded notifications, not decisions.
 - Supply `source_agent`, one compact `question`, and 2–6 `choices`, each with a unique stable semantic `id` and compact `label`. Optional `context` contains only decision-relevant information; optional `recommended_choice` names one of those stable ids. An optional `request_id` identifies the request; otherwise the server generates one.
 - For every repository-associated decision, supply `repository_path`. The server resolves the canonical GitHub repository name locally; do not substitute a caller-invented display label. Omit this path only for a genuinely non-repository decision.
 - The call waits for one canonical result. Use `selected_choice_id` as the answer, not a displayed numeric option. A timeout, cancellation, or channel error is not human approval; do not proceed as if the human selected a choice.
@@ -166,8 +166,8 @@ pub fn grok_skill_body() -> String {
         "{}\n\n{}",
         mcp_reference(),
         r#"<contacting_me_from_grok>
-- To request a bounded human decision, use the AskHuman `ask_human` MCP tool described above.
-- If the AskHuman `ask_human` MCP tool is not listed among your currently available tools, first use your tool-search/discovery mechanism to find it.
+- To request a bounded human decision, use the human-in-loop `ask_human` MCP tool described above.
+- If the human-in-loop `ask_human` MCP tool is not listed among your currently available tools, first use your tool-search/discovery mechanism to find it.
 - Do not replace the configured MCP interaction path with a shell/CLI command.
 </contacting_me_from_grok>"#
     )
@@ -403,7 +403,7 @@ mod tests {
         assert!(p.contains(&mcp_reference()));
         // 追加的 Grok 段只描述 MCP 路径和工具发现，不注入 CLI 备选。
         assert!(p.contains("not listed among your currently available tools"));
-        assert!(p.contains("AskHuman `ask_human` MCP tool"));
+        assert!(p.contains("human-in-loop `ask_human` MCP tool"));
         assert!(p.contains("Do not replace the configured MCP interaction path"));
         assert!(!p.contains("AskHuman --agent-help"));
         assert!(!p.contains("AskHuman --show-last"));
@@ -418,7 +418,8 @@ mod tests {
     #[test]
     fn mcp_reference_describes_only_the_supported_structured_contract() {
         for p in [mcp_reference(), grok_skill_body()] {
-            assert!(p.contains("`ask_human` tool provided by the AskHuman MCP server"));
+            assert!(p.contains("`ask_human` tool provided by the human-in-loop MCP server"));
+            assert!(p.contains("`notify_human` for bounded notifications, not decisions"));
             for field in [
                 "source_agent",
                 "question",

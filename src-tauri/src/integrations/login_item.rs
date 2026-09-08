@@ -36,7 +36,9 @@ fn current_exe() -> String {
 /// worktree 实例反复劫持导致控制台无限 Loading。判定用 env + exe 路径双料（launchd 重启的
 /// 进程无 env，靠 `.askhuman-dev` 路径段兜底）。
 fn is_dev_instance_context() -> bool {
-    if std::env::var(crate::dev_instance::ASKHUMAN_HOME_ENV).is_ok_and(|v| !v.trim().is_empty()) {
+    if std::env::var(crate::dev_instance::HUMAN_IN_LOOP_HOME_ENV)
+        .is_ok_and(|v| !v.trim().is_empty())
+    {
         return true;
     }
     std::env::current_exe().is_ok_and(|p| {
@@ -751,7 +753,7 @@ mod tests {
     #[test]
     fn dev_instance_context_follows_home_env() {
         // 与 paths.rs 的 env 测试同约定：串行修改进程 env，结束后恢复。
-        let key = crate::dev_instance::ASKHUMAN_HOME_ENV;
+        let key = crate::dev_instance::HUMAN_IN_LOOP_HOME_ENV;
         let prev = std::env::var_os(key);
         std::env::set_var(key, "/tmp/x/.askhuman-dev/home");
         assert!(is_dev_instance_context());

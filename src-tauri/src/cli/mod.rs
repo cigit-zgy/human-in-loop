@@ -238,7 +238,7 @@ pub fn dispatch() {
         "update" => {
             exit(update_cmd::dispatch(&argv[2..]));
         }
-        // MCP server 角色：以 STDIO 暴露唯一的结构化 `ask_human` 工具。
+        // MCP server 角色：以 STDIO 暴露结构化 `ask_human` 与通知型 `notify_human` 工具。
         // 极端歧义（问题正好是 "mcp"）可用 `AskHuman -q mcp` 规避。
         "mcp" => {
             crate::mcp::run();
@@ -267,7 +267,7 @@ pub fn dispatch() {
         // Hidden one-time bridge used only by a newly opened platform terminal.
         "__agent-launch" => {
             if let Err(error) = crate::integrations::agent_launch::run_helper(&argv[2..]) {
-                eprintln!("AskHuman: {error:#}");
+                eprintln!("human-in-loop: {error:#}");
                 exit(1);
             }
             exit(0);
@@ -275,7 +275,7 @@ pub fn dispatch() {
         // Hidden transactional Windows self-update worker.
         "__update-worker" => {
             if let Err(error) = crate::update::direct::run_windows_worker(&argv[2..]) {
-                eprintln!("AskHuman update worker: {error:#}");
+                eprintln!("human-in-loop update worker: {error:#}");
                 exit(1);
             }
             exit(0);
@@ -283,7 +283,7 @@ pub fn dispatch() {
         // Hidden Windows npm updater copied outside the package being replaced.
         "__npm-update-worker" => {
             if let Err(error) = crate::update::npm::run_windows_worker(&argv[2..]) {
-                eprintln!("AskHuman npm update worker: {error:#}");
+                eprintln!("human-in-loop npm update worker: {error:#}");
                 exit(1);
             }
             exit(0);
