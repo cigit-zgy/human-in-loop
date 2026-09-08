@@ -1,0 +1,21 @@
+{
+  "name": "@humaninloop/linux-x64",
+  "version": "0.1.0",
+  "description": "Linux x64 binary for human-in-loop. Installed automatically as an optional dependency of `humaninloop`. GUI popup requires system WebKitGTK.",
+  "license": "MIT",
+  "author": "cigit-zgy",
+  "homepage": "https://github.com/cigit-zgy/human-in-loop",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cigit-zgy/human-in-loop.git"
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin"
+  ]
+}

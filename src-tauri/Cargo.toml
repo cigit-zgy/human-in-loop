@@ -1,0 +1,162 @@
+[package]
+name = "humaninloop"
+version = "0.1.0"
+description = "human-in-loop interaction tool (Rust + Tauri)"
+authors = ["cigit-zgy"]
+license = "MIT"
+edition = "2021"
+# 实际下限：代码已使用 1.82+ 才 stable 的 API（如 Option::is_none_or），
+# clippy 的 incompatible_msrv lint 以此声明为准。
+rust-version = "1.82"
+default-run = "human-in-loop"
+
+[[bin]]
+name = "human-in-loop"
+path = "src/main.rs"
+
+[features]
+# 生产构建（直接 `cargo build --release`，不经 tauri CLI）必须启用此特性：
+# 否则 tauri 的 build.rs 判定 dev=true，二进制会去连 devUrl(localhost) 而非内嵌资源，导致白屏。
+# 注意：`pnpm tauri dev` 不启用此特性，仍走 dev server 热重载。请勿移除。
+custom-protocol = ["tauri/custom-protocol"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["macos-private-api", "tray-icon", "image-png"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Line-oriented permission preview diffs. Keep 2.x for the repository's Rust 1.82 MSRV;
+# similar 3.x requires Rust 1.85.
+similar = "2.7"
+# 以 CST 做“保留格式的最小化编辑”改写 hooks.json / settings.json：
+# 只触碰本应用注入的条目，用户的注释 / 缩进 / 转义（如 http:\/\/）逐字节保留；
+# 解析失败即中止，绝不整份重写覆盖用户文件。
+jsonc-parser = { version = "0.32", features = ["cst", "serde", "serde_json"] }
+# Codex 生命周期 hook 走 ~/.codex/config.toml，用 toml_edit 做“保留格式的最小化编辑”
+# （只增删本功能自己的 [hooks] / [hooks.state] 条目，保留用户其它配置与注释）。
+toml_edit = "0.22"
+# 计算 Codex hook 信任哈希（复刻 codex 的 version_for_toml：sha256 of 规范化 JSON）。
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4"] }
+# 会话型渠道公共接口（Telegram/钉钉等共享多问题驱动逻辑）需要 async trait。
+async-trait = "0.1"
+dirs = "6"
+# Shared local-time conversion. Chrono's `Local` backend uses each platform's maintained
+# timezone APIs, including Windows DST rules.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+fs2 = "0.4"
+base64 = "0.22"
+anyhow = "1"
+thiserror = "2"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "multipart"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util", "process"] }
+# Daemon 监听 ~/.askhuman/config.json 变更以实时重载配置（A12）。
+notify = "8"
+# 从窗口向系统发起原生文件拖拽（-f 附件胶囊可拖到其它应用打开）。
+tauri-plugin-drag = "2"
+# Todo 编辑器使用系统文件选择器选择附件。
+tauri-plugin-dialog = "2"
+# macOS 26+ Liquid Glass 整窗背景（NSGlassEffectView）；旧系统自动回退到 NSVisualEffectView；
+# 非 macOS 为安全空操作。
+tauri-plugin-liquid-glass = "0.1"
+# 检测系统深/浅色，用于 system 主题下给窗口设置正确底色（消除白闪）。
+# Linux 端依赖（zbus）仅在 Linux 目标编译，不影响 macOS 编译速度。
+dark-light = "2"
+tokio-tungstenite = { version = "0.29.0", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+futures-util = "0.3.32"
+# 飞书长连接帧为 protobuf(pbbp2)。仅用 prost 运行时 + #[derive(prost::Message)] 自定义 PbFrame，
+# 不引入 prost-build / protoc / build.rs（帧结构极小，自持更可控）。
+prost = "0.13"
+sys-locale = "0.3.2"
+# Markdown 解析（文本附件转 docx + macOS QuickLook 渲染预览）。禁用 simd 等默认特性以控体积，
+# 仅保留 `html`（QuickLook 预览把 .md 渲染成 HTML 走原生面板，见 macos_quicklook.rs）。
+pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
+# 打包 docx（OOXML zip）。仅启用 flate2+zlib-rs 的 deflate 后端（快且小，避免 zopfli）。
+zip = { version = "4.2.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+# 钉钉图片仅支持 jpg/png/gif/bmp(≤1MB)：把 webp 等不支持格式转码、并对超限图做缩放保护。
+# 仅启 png/jpeg/webp 解编码以控体积（heic/tiff 等无法解码时回退原图，best-effort）。
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+# 官方 Rust MCP SDK：`human-in-loop mcp` 以 STDIO 暴露维护中的 MCP 工具。
+# server feature 已含 macros 与 transport-io；显式列出 transport-io 以防特性裁剪。
+rmcp = { version = "2", features = ["server", "transport-io"] }
+schemars = "1"
+# Codex Shell 审批复刻（spec codex-permission-remember D32）：bash -lc 脚本按 tree-sitter-bash
+# 拆分为 word-only 命令段。版本与 Codex Cargo.lock 精确对齐（漂移会改变解析树 → 安全面）。
+tree-sitter = "=0.25.10"
+tree-sitter-bash = "=0.25.1"
+# rmcp 每请求 CancellationToken：ask_human 据此取消 canonical daemon request。
+tokio-util = { version = "0.7", default-features = false, features = ["rt"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["test-util"] }
+
+# Unix 下用于在进入 GUI 事件循环前静默系统噪音日志（重定向 stderr）。
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# Store channel secrets in the Windows Credential Manager.
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "3", default-features = false, features = ["windows-native"] }
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_Security_Cryptography",
+  "Win32_Security_WinTrust",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Diagnostics_Debug",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_Console",
+  "Win32_System_RemoteDesktop",
+  "Win32_System_Registry",
+  "Win32_System_Threading",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+# Store channel secrets in the Linux Secret Service (D-Bus; needs gnome-keyring/kwallet).
+# Falls back to plaintext config when unavailable (headless servers).
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
+
+# macOS 原生 QuickLook 预览（QLPreviewPanel）经 objc2 调用；版本与 Tauri 现用一致。
+# 需 NSResponder：预览控制者作为 NSResponder 子类插入弹窗响应链，方可经 QLPreviewPanelController
+# 协议（acceptsPreviewPanelControl/begin/end）控制面板，从而触发 previewPanel:handleEvent: 回调。
+[target.'cfg(target_os = "macos")'.dependencies]
+# Store channel secrets in the OS keychain (login keychain via Security.framework).
+keyring = { version = "3", default-features = false, features = ["apple-native"] }
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSArray", "NSURL", "NSGeometry", "NSData", "NSError", "NSLocale", "NSDictionary"] }
+objc2-app-kit = { version = "0.3", features = ["NSResponder", "NSEvent", "NSApplication", "NSImage", "NSDockTile"] }
+# 语音输入回调桥（block2 创建 @convention(block) 闭包供 Swift SpeechAnalyzer 回调）。
+block2 = "0.6"
+
+# 较快的 release 配置（不启用 LTO，避免原 Rust 版的慢链接）。
+# 编译性能将在功能完成后专门评测（见 docs/plans/rust-tauri.md §21）。
+[profile.release]
+opt-level = "z"
+codegen-units = 16
+incremental = true
+strip = true
+panic = "abort"
+
+# Fast local installation profile. Published artifacts and CI release builds continue to use
+# `profile.release`; this profile trades runtime optimization for much faster edit-build-install
+# cycles while retaining release semantics such as stripped symbols and panic=abort.
+[profile.local-install]
+inherits = "release"
+opt-level = 0
+codegen-units = 64
+incremental = true
+
+# Default tests and debug builds keep line tables/backtraces without the much larger full local
+# variable/type information. Use `--profile full-debug` when source-level debugger detail matters.
+[profile.dev]
+debug = 1
+
+[profile.full-debug]
+inherits = "dev"
+debug = 2

@@ -1,0 +1,42 @@
+{
+  "name": "humaninloop",
+  "version": "0.1.0",
+  "description": "Human-in-the-loop interaction tool with Feishu and iMessage-only Apple Messages channels.",
+  "license": "MIT",
+  "author": "cigit-zgy",
+  "homepage": "https://github.com/cigit-zgy/human-in-loop",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cigit-zgy/human-in-loop.git"
+  },
+  "type": "commonjs",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "bin": {
+    "human-in-loop": "bin/cli.js",
+    "AskHuman": "bin/cli.js"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "bin",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=16"
+  },
+  "keywords": [
+    "human-in-the-loop",
+    "cli",
+    "tauri",
+    "ai",
+    "mcp",
+    "prompt"
+  ],
+  "optionalDependencies": {
+    "@humaninloop/darwin-arm64": "0.1.0",
+    "@humaninloop/darwin-x64": "0.1.0",
+    "@humaninloop/win32-x64": "0.1.0",
+    "@humaninloop/linux-x64": "0.1.0"
+  }
+}

@@ -1,0 +1,1722 @@
+/* 弹窗样式（原 PopupView.vue 的 scoped 样式）。
+   拆分区块子组件后改为普通样式表：弹窗视图只在弹窗窗口加载（设置/历史等为独立窗口 + 异步
+   chunk），作用域天然隔离；且导航 flashCard 在运行时给卡片加 .flash 类，scoped 属性选择器
+   无法跨组件命中，普通选择器可以。 */
+
+.popup {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.confirm-request {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  width: 100%;
+  min-width: 0;
+}
+.confirm-request-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text-primary);
+}
+.confirm-tool {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+  overflow: hidden;
+  border: var(--hairline) solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  box-shadow: 0 1px 2px color-mix(in srgb, #000 4%, transparent);
+}
+.confirm-tool-header {
+  padding: 12px 14px;
+  border-bottom: var(--hairline) solid var(--border);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--text-primary);
+}
+.confirm-reason {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.confirm-detail {
+  min-width: 0;
+  padding: 13px 14px 14px;
+  background: color-mix(in srgb, var(--bg) 68%, transparent);
+}
+.permission-diff {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px 0 0;
+  background: color-mix(in srgb, var(--bg) 68%, transparent);
+}
+.permission-diff-summary,
+.permission-diff-status,
+.permission-diff-file-header {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.permission-diff-summary {
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 0 14px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.permission-diff-summary strong {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+.permission-diff-count {
+  margin-left: auto;
+}
+.permission-diff-stat {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-weight: 600;
+}
+.permission-diff-stat.additions {
+  color: #248a3d;
+}
+.permission-diff-stat.deletions {
+  color: #d70015;
+}
+.permission-diff-status {
+  gap: 7px;
+  margin: 0 14px;
+  padding: 1px 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: var(--text-secondary);
+  background: transparent;
+  font-size: 11px;
+  line-height: 1.35;
+}
+.permission-diff-status-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+}
+.permission-diff-status.status-snapshot_ready .permission-diff-status-dot,
+.permission-diff-status.status-new_file .permission-diff-status-dot {
+  background: #30a14e;
+}
+.permission-diff-status.status-payload_only .permission-diff-status-dot,
+.permission-diff-status.status-protected_path .permission-diff-status-dot,
+.permission-diff-status.status-timeout .permission-diff-status-dot,
+.permission-diff-status.status-too_large .permission-diff-status-dot,
+.permission-diff-status.status-too_many_files .permission-diff-status-dot,
+.permission-diff-status.status-non_utf8 .permission-diff-status-dot,
+.permission-diff-status.status-not_regular_file .permission-diff-status-dot,
+.permission-diff-status.status-unreadable .permission-diff-status-dot,
+.permission-diff-status.status-source_mismatch .permission-diff-status-dot,
+.permission-diff-status.status-unsupported .permission-diff-status-dot {
+  background: #d97706;
+}
+.permission-diff-status:not(.loading).status-payload_only,
+.permission-diff-status:not(.loading).status-protected_path,
+.permission-diff-status:not(.loading).status-timeout,
+.permission-diff-status:not(.loading).status-too_large,
+.permission-diff-status:not(.loading).status-too_many_files,
+.permission-diff-status:not(.loading).status-non_utf8,
+.permission-diff-status:not(.loading).status-not_regular_file,
+.permission-diff-status:not(.loading).status-unreadable,
+.permission-diff-status:not(.loading).status-source_mismatch,
+.permission-diff-status:not(.loading).status-unsupported {
+  padding: 7px 9px;
+  border-color: color-mix(in srgb, #d97706 28%, var(--border));
+  background: color-mix(in srgb, #d97706 9%, var(--bg));
+}
+.permission-diff-status.loading .permission-diff-status-dot {
+  animation: permission-diff-pulse 0.9s ease-in-out infinite alternate;
+}
+.permission-diff-time {
+  margin-left: auto;
+  white-space: nowrap;
+  color: var(--text-tertiary, var(--text-secondary));
+}
+.permission-diff-file {
+  min-width: 0;
+  border-top: var(--hairline) solid color-mix(in srgb, var(--border) 82%, transparent);
+}
+.permission-diff-file-header {
+  gap: 9px;
+  padding: 8px 14px;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--bg) 90%, transparent);
+  font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.permission-diff-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: text;
+}
+.permission-diff-move {
+  padding: 0 4px;
+  color: var(--text-secondary);
+}
+.permission-diff-file-status {
+  margin-left: auto;
+  color: var(--text-secondary);
+  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, sans-serif);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.permission-diff-hunk {
+  min-width: 0;
+  overflow-x: auto;
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+}
+.permission-diff-hunk-header,
+.permission-diff-line {
+  min-width: max-content;
+  font: 11px/1.48 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.permission-diff-hunk-header {
+  padding: 5px 14px;
+  color: color-mix(in srgb, var(--accent) 78%, var(--text-secondary));
+  background: color-mix(in srgb, var(--accent) 7%, var(--bg));
+}
+.permission-diff-line {
+  display: grid;
+  grid-template-columns: 38px 38px 18px minmax(max-content, 1fr);
+  align-items: stretch;
+  min-height: 18px;
+}
+.permission-diff-line-no,
+.permission-diff-prefix {
+  padding: 1px 6px;
+  color: var(--text-secondary);
+  text-align: right;
+  user-select: none;
+}
+.permission-diff-prefix {
+  padding-left: 4px;
+  padding-right: 4px;
+  text-align: center;
+}
+.permission-diff-line code {
+  display: block;
+  padding: 1px 14px 1px 4px;
+  color: var(--text-primary);
+  background: transparent;
+  white-space: pre;
+  user-select: text;
+}
+.permission-diff-line.kind-add {
+  background: var(--diff-add-bg);
+}
+.permission-diff-line.kind-delete {
+  background: var(--diff-delete-bg);
+}
+.permission-diff-line.kind-meta {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+.permission-diff-omitted {
+  margin: 0 14px 12px;
+  padding: 7px 9px;
+  border-radius: 7px;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, #d97706 9%, var(--bg));
+  font-size: 11px;
+}
+.confirm-raw-details {
+  border-top: var(--hairline) solid color-mix(in srgb, var(--border) 82%, transparent);
+}
+.confirm-raw-details > summary {
+  padding: 10px 14px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  user-select: none;
+}
+.confirm-raw-details[open] > summary {
+  border-bottom: var(--hairline) solid color-mix(in srgb, var(--border) 72%, transparent);
+}
+.confirm-raw-details .confirm-detail {
+  padding-top: 10px;
+}
+@keyframes permission-diff-pulse {
+  from { opacity: 0.35; }
+  to { opacity: 1; }
+}
+.confirm-options {
+  display: grid;
+  gap: 8px;
+}
+/* 前缀档位选择器（D51） */
+.confirm-variant-bar {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.confirm-variant-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.confirm-variant-title {
+  color: var(--text-secondary);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.confirm-variant-reset {
+  appearance: none;
+  border: 0;
+  padding: 1px 0;
+  color: var(--accent, #0a84ff);
+  background: transparent;
+  font-size: 11px;
+  cursor: pointer;
+}
+.confirm-variant-track {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0;
+  min-width: 0;
+  overflow-x: auto;
+  padding: 7px;
+  border: var(--hairline) solid var(--control-border);
+  border-radius: 8px;
+  background: var(--control-bg);
+}
+.confirm-variant-track::-webkit-scrollbar {
+  height: 5px;
+}
+.confirm-variant-track::-webkit-scrollbar-track {
+  background: transparent;
+}
+.confirm-variant-track::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 28%, transparent);
+}
+.confirm-variant-track::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-primary) 42%, transparent);
+}
+.confirm-variant-segment {
+  position: relative;
+  z-index: 0;
+  flex: 0 0 auto;
+  appearance: none;
+  min-width: 28px;
+  max-width: 190px;
+  margin-left: -1px;
+  overflow: hidden;
+  border: var(--hairline) solid var(--control-border);
+  border-radius: 0;
+  padding: 4px 8px;
+  color: var(--text-secondary);
+  background: var(--control-bg);
+  font-size: 12px;
+  cursor: pointer;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.confirm-variant-segment:first-child {
+  margin-left: 0;
+  border-radius: 6px 0 0 6px;
+}
+.confirm-variant-segment:last-child {
+  border-radius: 0 6px 6px 0;
+}
+.confirm-variant-segment code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+}
+.confirm-variant-segment.in-prefix {
+  z-index: 1;
+  border-color: color-mix(in srgb, var(--accent, #0a84ff) 52%, var(--control-border));
+  background: color-mix(in srgb, var(--accent, #0a84ff) 14%, var(--control-bg));
+  color: var(--text-primary);
+}
+.confirm-variant-segment.boundary {
+  z-index: 2;
+  border-color: var(--accent, #0a84ff);
+}
+.confirm-variant-segment.committed::after {
+  content: "";
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent, #0a84ff);
+}
+.confirm-option {
+  width: 100%;
+  box-sizing: border-box;
+}
+.confirm-option.role-destructive.selected {
+  border-color: color-mix(in srgb, #ff453a 55%, var(--control-border));
+  background: color-mix(in srgb, #ff453a 9%, var(--control-bg));
+}
+.confirm-option.role-destructive.selected .check.radio {
+  border-color: #ff453a;
+}
+.confirm-option.role-destructive.selected .check.radio::after {
+  background: #ff453a;
+}
+.confirm-option.role-destructive.selected .opt-sc {
+  color: #ff453a;
+  border-color: color-mix(in srgb, #ff453a 40%, transparent);
+}
+.confirm-option-label {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.confirm-option-label small {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.confirm-input-block {
+  display: grid;
+  gap: 7px;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+.confirm-input-block small {
+  justify-self: end;
+  color: var(--text-secondary);
+}
+@media (max-width: 560px) {
+  .confirm-request {
+    gap: 14px;
+  }
+}
+
+/* 托盘「待答」子菜单点击本弹窗 → 边框 accent 蓝脉冲 2 次（约 0.6s）。仅视觉，不拦截交互。 */
+.flash-overlay {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  border-radius: var(--radius-lg, 10px);
+  box-shadow:
+    inset 0 0 0 2px var(--accent),
+    inset 0 0 14px 2px color-mix(in srgb, var(--accent) 55%, transparent);
+  animation: popup-flash 0.3s ease-in-out 2;
+}
+@keyframes popup-flash {
+  0% { opacity: 0; }
+  50% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* 顶部导航栏：整条可拖动；品牌区/动作区透传拖拽，仅按钮可点 */
+.navbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 8px 12px 8px 14px;
+  border-bottom: var(--hairline) solid transparent;
+}
+.navbar.scrolled {
+  border-bottom-color: var(--border);
+}
+.macos .navbar {
+  padding-top: 30px;
+}
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+  /* 允许在窄窗内收缩，让标题/workspace 省略而非换行。 */
+  min-width: 0;
+  flex: 0 1 auto;
+}
+.brand-dot {
+  position: relative;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #30d158;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #30d158 22%, transparent);
+  animation: brand-dot-breathe 2.4s ease-in-out infinite;
+}
+.brand-dot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: #30d158;
+  animation: brand-dot-ping 2.4s ease-out infinite;
+}
+@keyframes brand-dot-breathe {
+  0%,
+  100% {
+    opacity: 0.85;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.12);
+  }
+}
+@keyframes brand-dot-ping {
+  0% {
+    opacity: 0.5;
+    transform: scale(1);
+  }
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(2.6);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .brand-dot,
+  .brand-dot::after {
+    animation: none;
+  }
+  .brand-dot::after {
+    display: none;
+  }
+}
+.brand-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: 0.1px;
+  /* 窄窗时省略而非换行（如「Message from the Loop」），且优先于 workspace 被截断。 */
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 内联模式（标题中嵌 agent/project 胶囊，如「来自 [Cursor] [Project] 的消息」）：
+   文字先于胶囊截断，优先级 后缀 > 前缀 > 项目名（agent 品牌名不缩）。
+   用 flex-shrink 权重近似分级：后缀 1000 ≫ 前缀 50 ≫ 项目名 1。 */
+.brand.inline .brand-title {
+  flex: 0 50 auto;
+}
+.brand.inline .brand-suffix {
+  flex: 0 1000 auto;
+}
+.brand.inline .brand-workspace {
+  flex-shrink: 1;
+  min-width: 0;
+}
+/* 头部弹窗时间：灰色小字，紧跟头部之后。空间不足时最先让位——给远高于标题/胶囊的收缩权重
+   （100000 ≫ 后缀 1000 ≫ 前缀 50 ≫ 项目 1）+ overflow 裁剪，使其先被压没再动其它元素。 */
+.brand-time {
+  pointer-events: auto;
+  flex: 0 100000 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  opacity: 0.7;
+  letter-spacing: 0.1px;
+}
+/* 标题旁的来源胶囊（agent / workspace）：浅灰底圆角矩形纯文字。
+   需 pointer-events:auto 才能 hover 出原生 title / 接收点击（导航栏其余可拖拽）。
+   标题先截断、胶囊尽量保留完整：胶囊不参与收缩（flex:0 0 auto）。 */
+.brand-chip {
+  pointer-events: auto;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 180px;
+  padding: 2px 7px;
+  border: none;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  letter-spacing: 0.1px;
+  font-family: inherit;
+  cursor: default;
+}
+.brand-chip .chip-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.brand-chip.clickable {
+  cursor: pointer;
+}
+.brand-chip.clickable:hover {
+  background: color-mix(in srgb, var(--text-primary) 14%, transparent);
+  color: var(--text-primary);
+}
+.chip-arrow {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  opacity: 0.65;
+}
+.brand-counter {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.nav-actions {
+  position: relative;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  /* Min width keeps layout stable while find bar overlays the buttons. */
+  min-height: 28px;
+  pointer-events: none;
+}
+.nav-actions-btns {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.nav-actions.find-open .nav-actions-btns {
+  opacity: 0;
+  transform: translateY(-4px);
+  pointer-events: none;
+}
+.nav-btn {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: default;
+}
+.nav-btn:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+.nav-btn.active {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+.nav-btn svg {
+  width: 16px;
+  height: 16px;
+}
+/* 版本自更新：入口按钮 + 圆点 + 浮层 + 待生效横条 */
+.update-wrap {
+  position: relative;
+  display: inline-flex;
+  pointer-events: auto;
+  /* 与右侧「置顶」按钮拉开一点距离 */
+  margin-right: 4px;
+}
+.update-btn {
+  position: relative;
+  color: var(--accent-orange);
+}
+.update-dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #30d158;
+  box-shadow: 0 0 0 2px var(--bg-base, rgba(0, 0, 0, 0.25));
+}
+.update-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+.update-popover {
+  position: absolute;
+  top: 34px;
+  right: 0;
+  z-index: 50;
+  width: 280px;
+  max-height: 360px;
+  overflow-y: auto;
+  background: var(--surface-overlay);
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.2));
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+  padding: 12px;
+  text-align: left;
+}
+.up-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 8px;
+}
+.up-notes {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  max-height: 180px;
+  overflow-y: auto;
+  margin: 0 0 8px;
+}
+.up-notes.muted {
+  opacity: 0.7;
+}
+.up-hint {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin: 0 0 8px;
+}
+.up-error {
+  font-size: 11px;
+  color: #ff453a;
+  white-space: pre-wrap;
+  margin: 0 0 8px;
+}
+.up-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+.update-pending-banner {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  padding: 8px var(--space-4);
+  text-align: center;
+}
+.popup-status {
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  font-size: 13px;
+  padding: 24px;
+  text-align: center;
+}
+.status-error {
+  color: #ff453a;
+  white-space: pre-wrap;
+}
+.content {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  /* 切题滑动时面板水平位移会超出宽度，裁剪掉以免出现横向滚动条 */
+  overflow-x: hidden;
+  padding: var(--space-4) var(--space-4) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* —— In-page find in navbar action corner (docs/specs/popup-find.md) —— */
+.popup-find-bar {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  /* Fixed outer width so only the input flexes; count/buttons never reflow the bar. */
+  width: min(320px, calc(100vw - 48px));
+  height: 28px;
+  padding: 0 2px 0 8px;
+  border-radius: 8px;
+  border: var(--hairline) solid var(--border);
+  /* Fully opaque so brand/title never show through on a narrow window. */
+  background: var(--surface-overlay);
+  box-shadow: var(--clickable-shadow);
+  pointer-events: auto;
+  transform: translateY(-50%);
+}
+.popup-find-icon {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+}
+.popup-find-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+  border: none;
+  outline: none;
+  box-shadow: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.2;
+  padding: 2px 4px;
+  /* No focus ring — slide-in + button fade carries attention. */
+  appearance: none;
+  -webkit-appearance: none;
+}
+.popup-find-input:focus,
+.popup-find-input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+.popup-find-input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+  display: none;
+}
+.popup-find-input.empty {
+  color: #c41e3a;
+}
+.theme-dark .popup-find-input.empty {
+  color: #ff7b72;
+}
+/* Reserve width for up to "999/999" so 9→10 does not grow the bar. */
+.popup-find-count {
+  flex: 0 0 4.75em;
+  width: 4.75em;
+  text-align: center;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  padding: 0;
+  user-select: none;
+  overflow: hidden;
+}
+.popup-find-count.empty {
+  color: #c41e3a;
+}
+.theme-dark .popup-find-count.empty {
+  color: #ff7b72;
+}
+.popup-find-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: default;
+}
+.popup-find-btn svg {
+  width: 13px;
+  height: 13px;
+}
+.popup-find-btn:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+.popup-find-case {
+  width: auto;
+  min-width: 24px;
+  padding: 0 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.popup-find-case.active {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+/* Slide down from above into the nav-actions slot; reverse on leave. */
+.popup-find-slide-enter-active,
+.popup-find-slide-leave-active {
+  transition:
+    opacity 0.2s ease,
+    transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.popup-find-slide-enter-from {
+  opacity: 0;
+  transform: translateY(calc(-50% - 10px));
+}
+.popup-find-slide-enter-to,
+.popup-find-slide-leave-from {
+  opacity: 1;
+  transform: translateY(-50%);
+}
+.popup-find-slide-leave-to {
+  opacity: 0;
+  transform: translateY(calc(-50% - 10px));
+}
+@media (prefers-reduced-motion: reduce) {
+  .nav-actions-btns,
+  .popup-find-slide-enter-active,
+  .popup-find-slide-leave-active {
+    transition: none;
+  }
+}
+mark.popup-find-hit,
+.popup-find-hit {
+  background: color-mix(in srgb, #ffd60a 72%, transparent);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+mark.popup-find-hit-current,
+.popup-find-hit-current {
+  background: color-mix(in srgb, #ff9f0a 88%, transparent);
+  outline: 1px solid color-mix(in srgb, #ff9f0a 70%, #000);
+  scroll-margin: 64px 12px;
+}
+.theme-dark mark.popup-find-hit,
+.theme-dark .popup-find-hit {
+  background: color-mix(in srgb, #ffd60a 42%, transparent);
+}
+.theme-dark mark.popup-find-hit-current,
+.theme-dark .popup-find-hit-current {
+  background: color-mix(in srgb, #ff9f0a 55%, transparent);
+  outline-color: color-mix(in srgb, #ff9f0a 80%, #fff);
+}
+.popup-find-atomic-proxy {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: block;
+  padding: 0;
+  pointer-events: none;
+  background: transparent;
+  outline: none;
+}
+.popup-find-atomic-hit {
+  outline: 2px solid color-mix(in srgb, #ffd60a 72%, transparent);
+  outline-offset: 2px;
+}
+.popup-find-atomic-current {
+  outline-color: color-mix(in srgb, #ff9f0a 90%, #000);
+  box-shadow: 0 0 0 3px color-mix(in srgb, #ff9f0a 20%, transparent);
+  scroll-margin: 64px 12px;
+}
+.theme-dark .popup-find-atomic-hit {
+  outline-color: color-mix(in srgb, #ffd60a 55%, transparent);
+}
+.theme-dark .popup-find-atomic-current {
+  outline-color: color-mix(in srgb, #ff9f0a 88%, #fff);
+}
+.options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+/* message 下方右对齐的小工具条（复制 message + Markdown/源码切换）。
+   独立一行、不与正文重叠；按钮矮而非方形，常态淡显、hover/激活时加亮。 */
+.msg-tools {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 4px;
+  margin-top: calc(-1 * var(--space-2));
+  margin-bottom: calc(-1 * var(--space-2));
+}
+.mt-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0.6;
+}
+.mt-btn:hover {
+  opacity: 1;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-elevated));
+}
+.mt-btn.active {
+  opacity: 1;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.mt-btn.done {
+  opacity: 1;
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.mt-ico {
+  width: 13px;
+  height: 13px;
+}
+.mt-check {
+  display: none;
+}
+.mt-btn.done .mt-copy {
+  display: none;
+}
+.mt-btn.done .mt-check {
+  display: inline;
+}
+/* 附件区 */
+.attachments {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.att-caption {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: var(--text-secondary);
+}
+.att-caption svg {
+  width: 13px;
+  height: 13px;
+}
+.att-list {
+  display: flex;
+  flex-flow: row wrap;
+  gap: 8px;
+}
+.attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  max-width: 100%;
+  padding: 5px 12px 5px 5px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: var(--control-bg);
+  cursor: default;
+  outline: none;
+  box-shadow: var(--clickable-shadow);
+}
+.attachment:hover {
+  background: var(--control-hover-bg);
+}
+.attachment.selected,
+.attachment:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.att-icon {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  border-radius: 50%;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.att-icon.is-image {
+  border-radius: 7px;
+  background: var(--card-bg);
+}
+.att-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.att-icon svg {
+  width: 15px;
+  height: 15px;
+}
+.att-meta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.att-name {
+  font-size: 13px;
+  color: var(--text-primary);
+  max-width: 180px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.att-size {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+/* 问题头部：问号图标 + 「Question i/n」，与 Message 同样式区隔靠分割线 */
+.q-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+/* 有 Message 时：间距 + 分割线，与上方描述区隔开 */
+.q-header.with-divider {
+  margin-top: 6px;
+  padding-top: 14px;
+  border-top: var(--hairline) solid var(--border);
+}
+.q-header .q-icon {
+  width: 17px;
+  height: 17px;
+  color: var(--accent);
+}
+/* 问题卡片：纵向平铺的单题容器（单问题时无高亮、不折叠，外观同旧版） */
+.q-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  /* 导航滚到顶时留出呼吸位；与 scroll-spy 判定线对齐 */
+  scroll-margin-top: 16px;
+  scroll-margin-bottom: 12px;
+}
+/* 焦点无常驻高亮：当前题（⌘1–9 角标落点）由**滚动**（scroll-spy）+ 点选/键盘导航决定，**已去掉 hover 改焦点**
+   （hover 会随滚轮把卡片移到光标下而乱跳）；也**不再有常驻**底色块/竖条（旧版常驻大色块 + 左侧蓝条会随焦点搬家）。
+   上一个/下一个/⌘[/⌘]/⌘↵ 跳转时用 `.q-card::before` 给整题「闪一下」（圆角、accent 淡底），一次性 opacity
+   1→0 渐隐（加 `.flash` 类触发，见 script flashCard）。 */
+.q-card::before {
+  content: "";
+  position: absolute;
+  /* 上/右/下维持不变（勿覆盖题间分割线）；只把**左边**外扩到 -9px：比 -6px 多一点蓝、又不贴窗口边框（留 ~7px 呼吸位）。 */
+  inset: 8px -6px -6px -9px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0; /* 平时不可见；仅 .flash 动画期间短暂显现后渐隐 */
+}
+/* 内容压在闪光层之上，保证可点击/可读 */
+.q-card > * {
+  position: relative;
+  z-index: 1;
+}
+.q-card.flash::before {
+  animation: q-flash 0.55s ease-out;
+}
+/* 拖拽悬停：复用闪光层做常显高亮 + 虚线描边，指明附件会落进哪一题（松手即消失）。 */
+.q-card.drop-target::before {
+  opacity: 1;
+  outline: 1.5px dashed color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: -1.5px;
+}
+@keyframes q-flash {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .q-card.flash::before {
+    animation: none;
+  }
+}
+/* 底部哨兵：零高度标记，进视口即判该题「已看到」 */
+.q-sentinel {
+  height: 1px;
+  margin-top: -1px;
+  pointer-events: none;
+}
+/* 多问题折叠态输入框：真·单行（聚焦或有内容时由 expandedQ 还原成多行高度）。
+   折叠态不显示麦克风/图片按钮，故无需底部留白；配合 rows="1" + height:auto 得 1 行。
+   双类选择器特异性高于全局 .textarea，可覆盖之。 */
+.textarea.collapsed {
+  min-height: 0;
+  height: auto;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+/* 旧版（顺序模式）单题面板容器 + 上一个/下一个左右滑动（out-in） */
+.question-pane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.q-slide-next-enter-active,
+.q-slide-next-leave-active,
+.q-slide-prev-enter-active,
+.q-slide-prev-leave-active {
+  transition: transform 0.14s ease, opacity 0.14s ease;
+}
+.q-slide-next-enter-from {
+  transform: translateX(26px);
+  opacity: 0;
+}
+.q-slide-next-leave-to {
+  transform: translateX(-26px);
+  opacity: 0;
+}
+.q-slide-prev-enter-from {
+  transform: translateX(-26px);
+  opacity: 0;
+}
+.q-slide-prev-leave-to {
+  transform: translateX(26px);
+  opacity: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .q-slide-next-enter-active,
+  .q-slide-next-leave-active,
+  .q-slide-prev-enter-active,
+  .q-slide-prev-leave-active {
+    transition: none;
+  }
+}
+/* 输入框容器：承载内置「添加图片」图标 */
+.composer-anchor {
+  min-width: 0;
+}
+.composer-anchor.is-docked {
+  flex: 0 0 auto;
+}
+.answer-composer {
+  --composer-docked-textarea-max-height: 120px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.answer-composer .input-wrap::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: var(--radius-md);
+  pointer-events: none;
+}
+.answer-composer .input-wrap:focus-within::after {
+  box-shadow: var(--focus-ring);
+}
+.answer-composer .textarea:focus,
+.answer-composer .textarea:focus-visible {
+  box-shadow: var(--clickable-shadow);
+}
+/* A collapsible composer is one real control surface. Its textarea and action row are borderless
+   children, so focus and hover belong to the surface instead of sitting behind an overlaid row. */
+.answer-composer.is-collapsible {
+  --compact-answer-height: calc(38px + 2 * var(--hairline));
+  --compact-answer-actions-height: 34px;
+}
+.answer-composer.is-collapsible .input-wrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: var(--compact-answer-height);
+  border: var(--hairline) solid var(--control-border);
+  border-radius: var(--radius-md);
+  background: var(--control-bg);
+  box-shadow: var(--clickable-shadow);
+  box-sizing: border-box;
+}
+.answer-composer.is-collapsible .input-wrap.has-text {
+  grid-template-columns: minmax(0, 1fr);
+  min-height: calc(
+    var(--compact-answer-height) + var(--compact-answer-actions-height)
+  );
+}
+.answer-composer.is-collapsible .input-wrap:not(:focus-within):hover {
+  background: var(--control-hover-bg);
+}
+.answer-composer.is-collapsible .input-wrap:focus-within {
+  box-shadow: var(--clickable-shadow);
+}
+.answer-composer.is-collapsible .textarea,
+.answer-composer.is-collapsible .textarea.collapsed {
+  min-width: 0;
+  min-height: calc(var(--compact-answer-height) - 2 * var(--hairline));
+  height: auto;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.answer-composer.is-collapsible .textarea:focus,
+.answer-composer.is-collapsible .textarea:focus-visible {
+  box-shadow: none;
+}
+.answer-composer.is-collapsible .composer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  padding-right: 7px;
+  box-sizing: border-box;
+}
+.answer-composer.is-collapsible .input-wrap.has-text .composer-actions {
+  height: var(--compact-answer-actions-height);
+  padding: 1px 7px 7px;
+}
+.answer-composer.is-collapsible .img-btn,
+.answer-composer.is-collapsible .mic-btn {
+  position: static;
+  flex: 0 0 26px;
+}
+/* Keep the visible gap at space-2 when the focus ring extends outside the control. */
+.options + .composer-anchor {
+  margin-top: calc(
+    var(--space-2) + var(--focus-ring-width) - var(--space-3)
+  );
+}
+.composer-dock {
+  position: relative;
+  z-index: 10;
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 8px var(--space-4) 10px;
+  border-top: var(--hairline) solid var(--border);
+  /* Opaque so scrolled message content does not bleed through the dock. */
+  background: var(--surface-overlay);
+  box-shadow: 0 -8px 22px color-mix(in srgb, #000 8%, transparent);
+}
+.composer-dock-home {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 0 6px;
+  padding: 2px 5px 2px 2px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  cursor: default;
+}
+.composer-dock-home:hover {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.composer-dock-home svg {
+  width: 14px;
+  height: 14px;
+}
+.composer-dock-target,
+.composer-dock-target .answer-composer {
+  min-width: 0;
+}
+.answer-composer.is-docked {
+  gap: 7px;
+}
+.answer-composer.is-docked .textarea {
+  max-height: var(--composer-docked-textarea-max-height);
+}
+.answer-composer.is-docked .composer-attachments {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 1px;
+}
+.answer-composer.is-docked .thumbs,
+.answer-composer.is-docked .reply-files {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  margin-top: 0;
+}
+.answer-composer.is-docked .thumb {
+  width: 38px;
+  height: 38px;
+}
+.answer-composer.is-docked .thumb .remove {
+  top: 1px;
+  right: 1px;
+  width: 15px;
+  height: 15px;
+  font-size: 10px;
+}
+.answer-composer.is-docked .reply-file {
+  max-width: 160px;
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+.input-wrap {
+  position: relative;
+  display: flex;
+}
+.img-btn {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: default;
+}
+.img-btn:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+.img-btn svg {
+  width: 17px;
+  height: 17px;
+}
+/* 语音输入按钮：与图片按钮并列，置于其左侧 */
+.mic-btn {
+  position: absolute;
+  right: 38px;
+  bottom: 8px;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: default;
+}
+.mic-btn:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+.mic-btn svg {
+  width: 17px;
+  height: 17px;
+}
+/* 准备中（loading）：初始化/下载模型期间显示 iOS 风格转圈（渐隐拖尾环），未真正录制 */
+.mic-btn.loading {
+  color: var(--text-secondary);
+}
+.mic-btn.loading svg {
+  display: none;
+}
+.mic-btn.loading::before {
+  content: "";
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    color-mix(in srgb, currentColor 8%, transparent),
+    currentColor
+  );
+  -webkit-mask: radial-gradient(
+    farthest-side,
+    transparent calc(100% - 2.4px),
+    #000 calc(100% - 2.4px)
+  );
+  mask: radial-gradient(
+    farthest-side,
+    transparent calc(100% - 2.4px),
+    #000 calc(100% - 2.4px)
+  );
+  animation: mic-spin 0.7s linear infinite;
+}
+@keyframes mic-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+/* 录音中：实心蓝（同发送按钮）+ 白色图标 + 透明度呼吸（不缩放） */
+.mic-btn.recording,
+.mic-btn.recording:hover {
+  color: #fff;
+  background: var(--accent);
+  animation: mic-breathe 1.6s ease-in-out infinite;
+}
+@keyframes mic-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.82;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mic-btn.recording,
+  .mic-btn.loading::before {
+    animation: none;
+  }
+}
+.speech-error {
+  margin: 6px 2px 0;
+  font-size: 12px;
+  color: #ff453a;
+}
+.speech-status {
+  margin: 6px 2px 0;
+  font-size: 12px;
+  color: var(--text-muted, #8e8e93);
+}
+.footer {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-top: var(--hairline) solid var(--border);
+  background: transparent;
+}
+/* R6 一次性引导提示条（页脚上方） */
+.im-tip {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px var(--space-4);
+  border-top: var(--hairline) solid var(--border);
+  background: color-mix(in srgb, var(--accent, #0a84ff) 8%, transparent);
+  font-size: 12px;
+}
+.im-tip-text {
+  flex: 1 1 auto;
+  color: var(--text-secondary);
+}
+.im-tip-action {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  padding: 2px 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent, #0a84ff);
+  cursor: default;
+}
+.im-tip-action:hover {
+  text-decoration: underline;
+}
+.im-tip-close {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted, #8e8e93);
+  cursor: default;
+}
+.im-tip-close:hover {
+  background: rgba(128, 128, 128, 0.2);
+  color: var(--text-secondary);
+}
+.footer .spacer {
+  flex: 1 1 auto;
+  pointer-events: none;
+}
+/* 待办下拉区（spec todo-whats-next D7 第 11 轮改版）：内容区里、最后一个问题之后。
+   收起＝一行「▸ 待办 N」；展开＝复用 .options/.option（与预选答案同构）+ 行内删除。 */
+.todo-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.todo-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  padding: 4px 10px 4px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: var(--control-bg);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: default;
+  text-align: left;
+  box-shadow: var(--clickable-shadow);
+}
+.todo-toggle:hover {
+  background: var(--control-hover-bg);
+  color: var(--text-primary);
+}
+.todo-caret {
+  flex: 0 0 auto;
+  transition: transform 0.15s ease;
+}
+.todo-caret.open {
+  transform: rotate(90deg);
+}
+.todo-title {
+  font-weight: 500;
+}
+.todo-count {
+  flex: 0 0 auto;
+  min-width: 16px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent, #0a84ff) 14%, transparent);
+  color: var(--accent, #0a84ff);
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+}
+.todo-picked {
+  color: var(--accent, #0a84ff);
+  font-size: 11px;
+}
+/* 不可选（严格选择）：无勾选框，正文淡显，仅保留删除。 */
+.todo-option.static .label {
+  color: var(--text-secondary);
+}
+.todo-option .todo-del {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted, #8e8e93);
+  opacity: 0;
+  cursor: default;
+}
+.todo-option:hover .todo-del {
+  opacity: 1;
+}
+.todo-option .todo-del:hover {
+  background: rgba(128, 128, 128, 0.2);
+  color: var(--text-secondary);
+}
+/* 删除二次确认态：✕ 变红色文字按钮，再点才真正删除（常显，不随 hover 隐藏）。 */
+.todo-option .todo-del-confirm {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  padding: 1px 8px;
+  border: 1px solid color-mix(in srgb, #ff453a 45%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, #ff453a 12%, transparent);
+  color: #ff453a;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: default;
+}
+.todo-option .todo-del-confirm:hover {
+  background: color-mix(in srgb, #ff453a 22%, transparent);
+}
+/* 选项末尾的快捷键标注（⌘1…⌘9） */
+.option .opt-sc {
+  flex: 0 0 auto;
+  align-self: center;
+  margin-left: 4px;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-secondary);
+  background: var(--bg-elevated);
+  border: var(--hairline) solid var(--border);
+  border-radius: 5px;
+  padding: 3px 5px;
+  opacity: 0.85;
+}
+.option.selected .opt-sc {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+/* 按钮上的快捷键标注 */
+.btn .sc {
+  margin-left: 6px;
+  font-size: 11px;
+  line-height: 1;
+  opacity: 0.75;
+  font-family: inherit;
+  border: none;
+  background: transparent;
+  padding: 0;
+}
+.btn-primary .sc {
+  opacity: 0.85;
+}
+/* 按住 ⌘/Ctrl：高亮可用的快捷键 Badge（提示此刻按数字即可选项 / 按括号可切题）。
+   仅当前题渲染了 .opt-sc，故天然只高亮当前题的选项角标。
+   不加 transition：WKWebView 会偶发漏掉过渡末帧的重绘，令角标停在中间态。 */
+.popup.cmd-held .option .opt-sc {
+  opacity: 1;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.popup.cmd-held .btn:not(:disabled) .sc {
+  opacity: 1;
+}
+
+/* 取消二次确认弹层 */
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.32);
+  z-index: 50;
+}
+.confirm-box {
+  width: min(320px, 84%);
+  background: var(--surface-overlay);
+  border: var(--hairline) solid var(--border);
+  border-radius: var(--radius-md, 12px);
+  padding: 18px 18px 14px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
+  text-align: center;
+}
+.confirm-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 6px;
+}
+.confirm-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 0 0 16px;
+}
+.confirm-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+.btn-danger {
+  color: #fff;
+  background: #ff453a;
+  border-color: transparent;
+}
+.btn-danger:hover {
+  background: #e23b31;
+}

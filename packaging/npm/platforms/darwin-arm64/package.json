@@ -1,0 +1,21 @@
+{
+  "name": "@humaninloop/darwin-arm64",
+  "version": "0.1.0",
+  "description": "macOS arm64 binary for human-in-loop. Installed automatically as an optional dependency of `humaninloop`.",
+  "license": "MIT",
+  "author": "cigit-zgy",
+  "homepage": "https://github.com/cigit-zgy/human-in-loop",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cigit-zgy/human-in-loop.git"
+  },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "bin"
+  ]
+}
