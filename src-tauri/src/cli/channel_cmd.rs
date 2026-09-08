@@ -209,13 +209,30 @@ fn toggle(args: &[String], enabled: bool, lang: Lang) -> Result<(), String> {
     config.save().map_err(|error| error.to_string())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TestConfigLoader {
+    WithSecrets,
+    WithoutSecrets,
+}
+
+fn test_config_loader(name: &str) -> TestConfigLoader {
+    if name == "feishu" {
+        TestConfigLoader::WithSecrets
+    } else {
+        TestConfigLoader::WithoutSecrets
+    }
+}
+
 fn test(args: &[String], lang: Lang) -> Result<(), String> {
     let name = canon(
         args.first()
             .ok_or_else(|| "usage: channel test <name>".to_string())?,
         lang,
     )?;
-    let config = AppConfig::load();
+    let config = match test_config_loader(name) {
+        TestConfigLoader::WithSecrets => AppConfig::load(),
+        TestConfigLoader::WithoutSecrets => AppConfig::load_without_secrets(),
+    };
     match name {
         "feishu" => cfgio::block_on(crate::commands::feishu_test(
             crate::commands::FeishuTestArgs {
@@ -361,6 +378,16 @@ fn print_line(value: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn channel_health_loads_secrets_only_for_feishu() {
+        assert_eq!(
+            test_config_loader("imessage"),
+            TestConfigLoader::WithoutSecrets
+        );
+        assert_eq!(test_config_loader("feishu"), TestConfigLoader::WithSecrets);
+    }
+
     #[test]
     fn imessage_is_configured_for_bootstrap_without_a_chat() {
         let mut config = AppConfig::default();
