@@ -9,6 +9,7 @@ This repository is the maintained human-in-the-loop bridge for coding agents. Th
 ```text
 explicit User instruction
 → design/                                  current accepted project design
+→ SKILL.md                                 Codex-facing operational projection
 → existing AskHuman specs/docs             implementation detail when consistent with design/
 → src-tauri/ + src/                         implementation
 → tests                                     conformance/design evidence
@@ -17,7 +18,7 @@ explicit User instruction
 `reports/concept/` is chronological design exploration/history only; it does not override current `design/`.
 
 Global collaboration authority:
-`cigit-zgy/agent-collaboration@8601466216515125bf8b17893b2a8e8673bab79e`
+`cigit-zgy/agent-collaboration@ad88170b23920ddac0bff9a2fd467aa0c59917cf`
 
 Do not copy collaboration manuals into this repository. Resolve global collaboration behavior through the pinned collaboration Skill/reference owners when needed.
 
@@ -37,10 +38,12 @@ Both are MIT-licensed at the pinned inspected coordinates. Preserve required att
 
 ```text
 design/                     current living design authority
-reports/concept/             chronological design history/input
-src-tauri/src/models.rs      canonical request/result data model after upstream import
-src-tauri/src/channels/      channel implementations after upstream import
-src/views/settings/          channel configuration UI after upstream import
+SKILL.md                    generic Codex checkpoint + terminal-report operating contract
+reports/concept/            chronological design history/input
+src-tauri/src/models.rs     canonical request/result data model
+src-tauri/src/channels/     channel implementations
+src-tauri/src/mcp/          public MCP ask_human / notify_human surface
+src/views/settings/         channel configuration UI
 ```
 
 `tmp/` is the project-local Agent ephemeral boundary when local execution needs temporary artifacts.
@@ -53,8 +56,19 @@ Current design / conformance:
 AGENTS.md
 → design/README.md
 → directly relevant current design topic(s)
+→ SKILL.md when Codex-facing behavior is involved
 → implementation/tests
 ```
+
+For Codex machine-wide integration read only:
+
+```text
+design/05_mcp_interface.md
++ design/06_codex_integration.md
++ SKILL.md
+```
+
+unless a concrete transport concern requires its owning channel topic.
 
 Historical rationale or new design exploration:
 
@@ -73,14 +87,16 @@ For implementation work, preserve the upstream AskHuman verification discipline.
 
 - Carrier messaging is prohibited. Apple Messages delivery is iMessage-only and must fail closed if iMessage cannot be used.
 - A channel renderer may reduce presentation detail to its bounded surface, but it may never omit information required for a safe user decision.
-- The iMessage channel accepts only structured confirmation interactions in the initial design; unsupported requests are not partially rendered.
+- iMessage accepts only supported bounded confirmation/notification surfaces; unsupported content is not partially rendered into a misleading interaction.
 - Credentials and message contents remain local except where the selected delivery service necessarily transmits them.
+- Machine-wide Codex installation/configuration must preserve unrelated existing `$CODEX_HOME/AGENTS.md` and `$CODEX_HOME/config.toml` content; do not replace either file wholesale.
 
 ## Hard invariants
 
 - Exactly two maintained remote delivery channels are product-supported: `feishu` and `imessage`.
 - No Telegram, Slack, DingTalk, WeChat, SMS, MMS, RCS, paid messaging gateway, or automatic carrier fallback is product-supported.
-- Canonical confirmation semantics are transport-independent; Feishu cards and iMessage text are renderers of the same request/result objects.
+- Canonical confirmation semantics are transport-independent; Feishu cards and iMessage text render the same decision request/result objects.
+- `ask_human` is blocking/correlated decision semantics; `notify_human` is non-blocking informational semantics. Do not collapse them into one fake acknowledgement model.
 - iMessage transport always uses explicit iMessage selection and never `auto` or `sms` service selection.
 - `openclaw/imsg` remains an external dependency; do not copy its source into this repository.
 - `design/` contains one current accepted design set only; no old/draft/versioned alternatives.
