@@ -24,7 +24,7 @@ pub const MAX_CHOICES: usize = 6;
 pub const MAX_CHOICE_LABEL_CHARS: usize = 60;
 pub const MAX_RENDERED_CHARS: usize = 700;
 pub const MAX_IMAGE_BYTES: u64 = 5 * 1024 * 1024;
-const SUPPORTED_IMSG_VERSION: &str = "0.15.1";
+pub(crate) const SUPPORTED_IMSG_VERSION: &str = "0.15.1";
 const CHAT_SCAN_LIMIT: usize = 10_000;
 const CHAT_SCAN_TIMEOUT: Duration = Duration::from_secs(90);
 const POST_SEND_CHAT_LIMIT: usize = 20;
@@ -379,10 +379,14 @@ pub fn admit_image(
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HealthState {
     NotConfigured,
+    BotSessionLoginRequired,
+    BotMessagesAccountUnavailable,
+    BotSenderIdentityUnverified,
+    SelfMessageUnsupported,
     ImsgMissing,
     PermissionMissing,
     MessagesUnavailable,
@@ -399,6 +403,10 @@ impl HealthState {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::NotConfigured => "not_configured",
+            Self::BotSessionLoginRequired => "BOT_SESSION_LOGIN_REQUIRED",
+            Self::BotMessagesAccountUnavailable => "BOT_MESSAGES_ACCOUNT_UNAVAILABLE",
+            Self::BotSenderIdentityUnverified => "BOT_SENDER_IDENTITY_UNVERIFIED",
+            Self::SelfMessageUnsupported => "SELF_MESSAGE_UNSUPPORTED",
             Self::ImsgMissing => "imsg_missing",
             Self::PermissionMissing => "permission_missing",
             Self::MessagesUnavailable => "messages_unavailable",
@@ -587,11 +595,19 @@ fn compatible_version(stdout: &[u8]) -> bool {
 
 /// Check the documented external CLI and verify that the stored conversation remains a direct
 /// iMessage chat with the configured peer. Human-oriented output is never parsed.
-pub async fn health(config: &IMessageChannelConfig) -> HealthState {
+pub(crate) async fn health_local(config: &IMessageChannelConfig) -> HealthState {
     match prepare(config).await {
         Ok(Readiness::Ready(_)) => HealthState::Ready,
         Ok(Readiness::BootstrapRequired) => HealthState::BootstrapRequired,
         Err(state) => state,
+    }
+}
+
+pub async fn health(config: &IMessageChannelConfig) -> HealthState {
+    if super::imessage_worker::required_for(config.identity_mode) {
+        super::imessage_worker::health(config).await
+    } else {
+        health_local(config).await
     }
 }
 
@@ -1705,6 +1721,26 @@ mod tests {
         assert_eq!(
             classify_failure(Some(1), "operation not permitted for chat.db"),
             HealthState::PermissionMissing
+        );
+    }
+
+    #[test]
+    fn production_bot_health_states_are_distinct_and_stable() {
+        assert_eq!(
+            HealthState::BotSessionLoginRequired.as_str(),
+            "BOT_SESSION_LOGIN_REQUIRED"
+        );
+        assert_eq!(
+            HealthState::BotMessagesAccountUnavailable.as_str(),
+            "BOT_MESSAGES_ACCOUNT_UNAVAILABLE"
+        );
+        assert_eq!(
+            HealthState::BotSenderIdentityUnverified.as_str(),
+            "BOT_SENDER_IDENTITY_UNVERIFIED"
+        );
+        assert_eq!(
+            HealthState::SelfMessageUnsupported.as_str(),
+            "SELF_MESSAGE_UNSUPPORTED"
         );
     }
 

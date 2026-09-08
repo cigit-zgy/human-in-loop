@@ -6,6 +6,7 @@ pub mod dingding;
 pub mod feishu;
 pub mod health;
 pub mod imessage;
+pub mod imessage_worker;
 pub mod notify;
 pub mod popup;
 pub mod slack;
@@ -161,4 +162,41 @@ pub trait Channel: Send + Sync {
     /// Interrupt this channel before it produced a result, finalizing its UI per `reason`
     /// (preempted by a winner, or the whole request cancelled). Does not deliver a result.
     fn interrupt(&self, reason: &Interruption);
+}
+
+#[cfg(test)]
+mod imessage_worker_contract_tests {
+    use super::imessage_worker::{peer_allowed, WorkerRequest, WorkerResponse, WORKER_SOCKET_PATH};
+
+    #[test]
+    fn worker_protocol_is_closed_and_transport_private_results_stay_private() {
+        let request: WorkerRequest =
+            serde_json::from_str(r#"{"operation":"health","recipient":"person@example.com"}"#)
+                .unwrap();
+        assert!(matches!(request, WorkerRequest::Health { .. }));
+        assert!(serde_json::from_str::<WorkerRequest>(
+            r#"{"operation":"exec","command":"whoami"}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<WorkerRequest>(
+            r#"{"operation":"health","recipient":"person@example.com","chatDb":"/tmp/db"}"#
+        )
+        .is_err());
+
+        let encoded = serde_json::to_string(&WorkerResponse::Answer { choice_index: 1 }).unwrap();
+        assert_eq!(encoded, r#"{"event":"answer","choiceIndex":1}"#);
+        for private in ["recipient", "token", "chat", "guid", "row", "message"] {
+            assert!(!encoded.to_ascii_lowercase().contains(private));
+        }
+    }
+
+    #[test]
+    fn worker_endpoint_and_peer_check_are_fixed() {
+        assert_eq!(
+            WORKER_SOCKET_PATH,
+            "/Users/Shared/human-in-loop-imessage-worker.sock"
+        );
+        assert!(peer_allowed(501, 501));
+        assert!(!peer_allowed(501, 502));
+    }
 }

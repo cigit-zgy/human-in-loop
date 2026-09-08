@@ -243,6 +243,19 @@ pub fn dispatch() {
         "mcp" => {
             crate::mcp::run();
         }
+        // Dedicated macOS-user transport boundary. Hidden from ordinary product help; installation
+        // is performed interactively inside the `human-in-loop` user session.
+        "imessage-worker" => {
+            match crate::channels::imessage_worker::dispatch(&argv[2..]) {
+                Ok(output) if !output.is_empty() => print_line(&output),
+                Ok(_) => {}
+                Err(error) => {
+                    eprintln!("human-in-loop: {error}");
+                    exit(1);
+                }
+            }
+            exit(0);
+        }
         // 隐藏的生命周期上报器：由三家 Agent 的用户级 hook 调用
         // （`AskHuman __agent-hook <agent> <event>`，spec D20）。即发即走、静默退出。
         "__agent-hook" => {

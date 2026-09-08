@@ -612,15 +612,6 @@ async fn run_imessage(
     use crate::channels::imessage::{self, HealthState};
 
     let channel = "imessage";
-    let readiness = match imessage::prepare(config).await {
-        Ok(readiness) => readiness,
-        Err(health) => {
-            crate::channels::health::report(channel, health.as_str());
-            fail(entry, channel, health.as_str());
-            return;
-        }
-    };
-
     let repository = match crate::project::repository_identity(&entry.project) {
         crate::project::RepositoryIdentity::NonRepository => None,
         crate::project::RepositoryIdentity::Github(repository) => Some(repository),
@@ -638,6 +629,61 @@ async fn run_imessage(
         Ok(rendered) => rendered,
         Err(reason) => {
             fail(entry, channel, format!("unsupported: {reason:?}"));
+            return;
+        }
+    };
+    if crate::channels::imessage_worker::required_for(config.identity_mode) {
+        let image = entry.request.decision_image.as_ref();
+        if let Err(reason) = crate::channels::imessage_worker::admit_cross_user_image(
+            image.is_some(),
+            image.is_some_and(|image| image.required_for_decision),
+        ) {
+            fail(entry, channel, format!("unsupported: {reason:?}"));
+            return;
+        }
+        let mut worker = match crate::channels::imessage_worker::start_confirm(
+            config,
+            &entry.request_id,
+            token,
+            &rendered.text,
+            rendered.choice_indices,
+            entry.request.expires_at_ms,
+        )
+        .await
+        {
+            Ok(worker) => worker,
+            Err(health) => {
+                crate::channels::health::report(channel, health.as_str());
+                fail(entry, channel, health.as_str());
+                return;
+            }
+        };
+        if !entry.mark_ready(channel, String::new()) {
+            return;
+        }
+        crate::channels::health::clear(channel);
+        match worker.next().await {
+            Ok(crate::channels::imessage_worker::WorkerResponse::Answer { choice_index }) => {
+                let _ = entry.coordinator.submit_wire(choice_index, None, channel);
+            }
+            Ok(crate::channels::imessage_worker::WorkerResponse::Error { state }) => {
+                crate::channels::health::report(channel, &state);
+                fail(entry, channel, state);
+            }
+            _ if !entry.coordinator.is_terminal() => {
+                crate::channels::health::report(channel, HealthState::WatchFailed.as_str());
+                fail(entry, channel, HealthState::WatchFailed.as_str());
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    let readiness = match imessage::prepare(config).await {
+        Ok(readiness) => readiness,
+        Err(health) => {
+            crate::channels::health::report(channel, health.as_str());
+            fail(entry, channel, health.as_str());
             return;
         }
     };

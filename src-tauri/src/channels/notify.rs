@@ -172,6 +172,11 @@ pub async fn dispatch(
                     }
                     NotificationChannel::Imessage => {
                         let channel = &config.channels.imessage;
+                        if crate::channels::imessage_worker::required_for(channel.identity_mode) {
+                            return crate::channels::imessage_worker::notify(channel, text)
+                                .await
+                                .is_ok();
+                        }
                         let Ok(readiness) = imessage::prepare(channel).await else {
                             return false;
                         };
