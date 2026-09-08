@@ -37,6 +37,12 @@ iMessage
 
 Declining an unsupported request is not a channel failure and must not emit a partial message.
 
+# Channel readiness
+
+The iMessage channel may participate only when its `ready` state satisfies the Bot session and sender/recipient identity prerequisites owned by `03_imessage_channel.md`. In particular, `BOT_SESSION_LOGIN_REQUIRED`, `BOT_MESSAGES_ACCOUNT_UNAVAILABLE`, `BOT_SENDER_IDENTITY_UNVERIFIED`, and `SELF_MESSAGE_UNSUPPORTED` make iMessage ineligible without relaxing any transport rule.
+
+Readiness remains channel-local. When iMessage is `BOT_SESSION_LOGIN_REQUIRED` after a reboot, an independently ready Feishu channel may still deliver and complete the request. The coordinator does not reinterpret that iMessage health state as a Feishu failure.
+
 # Parallel delivery and first-answer semantics
 
 When both channels are enabled and both support a request:
@@ -78,4 +84,4 @@ History records the canonical request/result plus winning `source_channel_id`. C
 
 # Design acceptance
 
-This concern is complete when unsupported iMessage requests never partially send, exactly one terminal answer can win, removing legacy channels leaves no hidden auto-routing path, and channel failure cannot bypass iMessage-only or structured-decision invariants.
+This concern is complete when unsupported or non-ready iMessage requests never partially send, exactly one terminal answer can win, `BOT_SESSION_LOGIN_REQUIRED` leaves an independently ready Feishu path usable, removing legacy channels leaves no hidden auto-routing path, and channel failure cannot bypass iMessage-only, distinct-identity, or structured-decision invariants.

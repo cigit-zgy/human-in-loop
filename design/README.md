@@ -7,7 +7,7 @@ This directory is the sole current living-design authority. Historical reasoning
 | `00_overview.md` | `system-overview` | Product scope, architecture, upstream/reuse boundary, whole-system invariants |
 | `01_interaction_protocol.md` | `interaction-protocol` | Canonical structured confirmation, bounded iMessage rendering, reply correlation, image admission |
 | `02_channel_coordination.md` | `channel-coordination` | Exactly-two-channel activation, racing, support/fallback semantics |
-| `03_imessage_channel.md` | `imessage-channel` | Free iMessage-only transport through `openclaw/imsg`, permissions, send/watch behavior, fail-closed rules |
+| `03_imessage_channel.md` | `imessage-channel` | Dedicated Bot Apple Account/macOS-user transport through `openclaw/imsg`, session/identity health, strict send/watch behavior, notification qualification, and iMessage-only fail-closed rules |
 | `04_feishu_channel.md` | `feishu-channel` | Feishu card transport retained from AskHuman and aligned with the canonical protocol |
 | `05_mcp_interface.md` | `mcp-interface` | Minimal public MCP `ask_human` blocking decision + `notify_human` non-blocking notification surface |
 | `06_codex_integration.md` | `codex-integration` | Machine-wide Codex activation, checkpoint classification, terminal reporting, and failure semantics |

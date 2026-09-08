@@ -4,9 +4,9 @@ title: Apple Messages channel (iMessage only)
 status: active
 role: design_authority
 summary: >
-  Defines a free iMessage-only channel backed by the external openclaw/imsg CLI,
-  including distinct-peer and same-Apple-Account operation with strict request
-  correlation, compact notification presentation, and explicit no-SMS fail-closed behavior.
+  Defines the dedicated Bot Apple Account and macOS-user transport boundary,
+  lifecycle and health states, strict request correlation, human-verified
+  notification qualification, and explicit no-SMS fail-closed behavior.
 operational_projection:
   - src-tauri/src/channels/imessage.rs
   - src-tauri/src/commands/
@@ -15,20 +15,31 @@ operational_projection:
 
 # Purpose
 
-Deliver bounded AskHuman confirmations to the user's iPhone through Apple's iMessage service using the Mac's existing Messages.app account, then watch the same conversation for a strictly correlated option reply.
+Deliver bounded AskHuman confirmations and notifications as genuine incoming iMessages from a dedicated Bot Apple Account to the user's personal iPhone, then watch the Bot-owned direct conversation for a strictly correlated option reply.
 
-The supported topology includes both:
+The production-qualified topology is:
 
 ```text
-distinct_peer
-same_account
+Guangyao Zhao macOS user
+├── personal Apple Account and personal Messages.app remain unchanged
+├── Codex / Agent
+└── main human-in-loop coordinator
+          ↓
+    narrow authenticated local IPC
+          ↓
+human-in-loop macOS user
+├── independent Bot Apple Account in Bot Messages.app
+├── Bot transport worker
+└── Bot-owned imsg process
+          ↓
+      iMessage only
+          ↓
+personal iPhone / personal Apple Account
 ```
 
-`same_account` means the Mac and iPhone use the same Apple Account / iMessage identity. This is a first-class supported topology; a second Apple Account is not required.
+The distinct sender/recipient account requirement is the whole-system invariant defined in `00_overview.md`. This topic owns how Apple Messages establishes that identity evidence, becomes ready, and fails closed when the evidence is absent or self-addressed.
 
-The channel does not claim device-level provenance. In `same_account` mode, the trust decision is that a new message in the configured user-controlled iMessage conversation satisfies the strict post-send request-correlation contract. The public Messages database does not provide a reliable basis for asserting that a correlated message physically originated on the iPhone rather than another trusted device on the same Apple Account.
-
-# Dependency boundary
+# Dependency and ownership boundary
 
 Runtime dependency:
 
@@ -47,51 +58,108 @@ long-lived receive: imsg watch --chat-id <id> --json
 
 Do not use Advanced IMCore, SIP disabling, private framework injection, typing/read-receipt features, edit/unsend/delete bridge features, or other advanced bridge features.
 
-# Configuration and identity mode
+The Bot transport worker, `imsg`, Messages.app, Messages database, Apple session, and Apple-channel TCC grants belong to the `human-in-loop` macOS user. The main coordinator under `Guangyao Zhao` does not directly read the Bot user's `chat.db`, launch the Bot user's `imsg`, or automate the Bot user's Messages.app across UID boundaries.
 
-One iMessage destination is configured locally with:
+The future runtime boundary is:
 
 ```text
+main coordinator
+→ narrow authenticated local IPC
+→ Bot transport worker
+→ imsg
+→ Messages.app
+```
+
+The Bot worker is expected to be managed by a `human-in-loop` user-session service such as a LaunchAgent. This design freezes only ownership and authentication boundaries; it does not select the IPC protocol or daemon/LaunchAgent implementation.
+
+# Configuration and identity evidence
+
+The Apple Messages channel is configured locally with only the transport state it needs:
+
+```text
+bot macOS user = human-in-loop
+Bot sender handle
 recipient handle: E.164 phone number or iMessage email
-identity mode: distinct_peer | same_account
 resolved direct chat id/guid when available
 observed service = iMessage when available
+Bot session and channel health state
 ```
 
-The recipient is private runtime configuration. It must not be committed into repository source, fixtures, examples, reports, screenshots, or logs.
+Bot and recipient handles are private runtime configuration. They must not be committed into repository source, fixtures, examples, reports, screenshots, or logs.
 
-For an already existing direct conversation, setup resolves and stores the direct chat identity before normal operation.
+Before production readiness, documented local evidence must verify both the Bot sender identity and recipient identity and establish that they belong to distinct Apple/iMessage account topologies. Inability to verify either identity fails closed. A self-addressed topology becomes `SELF_MESSAGE_UNSUPPORTED` before any send.
 
-For `same_account`, the recipient may be one of the user's own iMessage handles. The absence of an existing direct conversation is not itself an error. First use may bootstrap that direct conversation under the bounded rules below.
+The Bot Apple Account is a real Apple Account already owned by the User and dedicated to human-in-loop use. The project never stores or requests Apple Account passwords, 2FA codes, trusted-phone credentials, Apple session secrets, or unrelated Messages history.
 
-Required macOS permissions are those documented by `imsg` for the used features:
+Recommended privacy settings for the Bot account are:
 
 ```text
-Full Disk Access      read/watch Messages database
-Automation → Messages send through Messages.app
+Photos sync          OFF
+Contacts sync        OFF unless explicitly required
+iCloud Drive         OFF
+Keychain sync        OFF
+Calendar             OFF
+other personal data  OFF
 ```
 
-# First-use bootstrap
+Messages in iCloud is not a human-in-loop requirement for a single-Mac Bot transport host.
 
-When no deterministic existing direct iMessage chat can be resolved, the channel may bootstrap only if all are true:
+# First-time setup and session lifecycle
+
+First deployment requires the User to perform normal macOS and Apple setup:
+
+1. Create or confirm the dedicated `human-in-loop` macOS user.
+2. Log in to that macOS user.
+3. Sign the Bot Messages.app into the independent Bot Apple Account.
+4. Confirm iMessage activation.
+5. Grant the Bot runtime/`imsg` Full Disk Access and Automation → Messages through normal macOS controls.
+6. Fast User Switch back to `Guangyao Zhao`.
+
+Apple Account and Messages credentials remain in the normal macOS/Apple profile. The human-in-loop project does not copy or manage them.
+
+After first setup:
+
+- sleep does not require another Bot login;
+- screen lock does not require another Bot login;
+- Fast User Switching may leave the Bot transport available while the `human-in-loop` graphical session remains logged in;
+- loss or termination of that user session removes Apple Messages readiness.
+
+A real reboot is a hard lifecycle boundary. Saved Apple credentials do not imply that the Bot graphical/login session has been re-established. Until the User logs in once to `human-in-loop` after restart, the channel is `BOT_SESSION_LOGIN_REQUIRED`, not `ready`.
+
+The user-facing recovery instruction is explicit:
 
 ```text
-recipient was explicitly configured/approved by the user
-AND identity mode is known
+Apple Messages requires the dedicated “human-in-loop” macOS user to be logged in once after restart.
+Log in to “human-in-loop”, then Fast User Switch back to “Guangyao Zhao”.
+```
+
+Do not ask for the Apple Account password again unless Messages or Apple itself reports that its saved account/session is no longer valid.
+
+# Direct-conversation bootstrap
+
+For an already existing direct conversation, setup resolves and stores the Bot-owned direct chat identity before normal operation.
+
+When no deterministic existing direct iMessage chat can be resolved, the channel may enter `bootstrap_required` only if all are true:
+
+```text
+recipient was explicitly configured/approved by the User
+AND Bot sender and recipient identities are verified and distinct
+AND the human-in-loop Bot session is active
+AND Bot Messages account and iMessage activation are available
 AND imsg is available
 AND required local database access is available
 AND the canonical request is supported by the iMessage renderer
 ```
 
-Bootstrap is not a separate probe message. The first real structured confirmation is sent directly to the configured handle using the same production mutation path:
+Bootstrap is not a separate probe message. The first real structured confirmation is sent directly from the Bot worker to the configured handle using the production mutation path:
 
 ```text
 imsg send --to <handle> --service imessage --no-sms-fallback ...
 ```
 
-Before dispatch, create the normal request token and establish a pre-send database/cursor boundary. After a successful iMessage mutation, resolve the resulting direct conversation and the actual outgoing request row from documented local data. Publish/persist the chat identity only when resolution is deterministic and the service is iMessage.
+Before dispatch, create the normal request token and establish a pre-send database/cursor boundary. After a successful iMessage mutation, resolve the resulting direct conversation and actual outgoing request row from documented local data. Publish/persist the chat identity only when resolution is deterministic and the service is iMessage.
 
-The post-bootstrap state must establish enough request evidence for correlation, including where available:
+The post-bootstrap state establishes enough request evidence for correlation, including where available:
 
 ```text
 chat_id / chat_guid
@@ -113,7 +181,7 @@ imsg send --to <handle> --service imessage --no-sms-fallback ...
 
 `--no-sms-fallback` is retained as defense in depth even though explicit `--service imessage` disables fallback in the inspected `imsg` behavior.
 
-The implementation MUST NOT invoke:
+The implementation MUST NOT invoke or expose:
 
 ```text
 --service auto
@@ -122,42 +190,43 @@ SMS fallback
 carrier relay
 MMS
 RCS
+paid messaging gateway
 ```
 
-The UI contains no switch that can enable these paths.
+The UI contains no switch that can enable these paths. If the handle is unavailable via iMessage, the channel becomes unavailable and sends nothing through carrier transport.
 
-If `imsg` reports that the handle is not available via iMessage, the channel becomes unavailable for that request and sends nothing through carrier transport.
+After each production send, documented local evidence must establish that the actual outgoing service was iMessage. If the service cannot be proven, fail closed.
 
 # Send semantics
 
 For each supported request:
 
-1. Validate configuration, identity mode, and `imsg` availability/version.
-2. If a resolved direct chat exists, validate that it still represents the configured destination and iMessage service as far as documented local data permits.
-3. Render the compact bounded structured notification defined by `01_interaction_protocol.md` and allocate the collision-safe request token before mutation.
-4. Establish a pre-send cursor/time boundary.
-5. If one admitted decision image exists, stage/send it through the permitted iMessage file path; otherwise send text only.
-6. Use explicit iMessage service selection for every direct send.
-7. Confirm or resolve the actual outgoing request row/chat after send when local database evidence is available.
-8. Treat uncertain send outcomes according to `imsg`'s reported disposition; do not blindly retry a mutation with an uncertain outcome.
-9. One canonical request causes at most one application send mutation unless the caller initiates a new canonical request; platform synchronization duplicates are not application retries.
+1. Require either `ready` or the explicitly admitted `bootstrap_required` path. Both require the active Bot session, Bot Messages account, verified distinct identities, `imsg`, permissions, and iMessage-only eligibility; only bootstrap may begin before a deterministic direct conversation exists.
+2. Render the compact bounded surface defined by `01_interaction_protocol.md` and allocate the collision-safe request token before mutation.
+3. Establish a pre-send cursor/time boundary within the Bot-owned Messages context.
+4. If one admitted decision image exists, stage/send it through the permitted iMessage file path; otherwise send text only.
+5. Dispatch through the authenticated local IPC to the Bot worker, which uses explicit iMessage service selection.
+6. Confirm or resolve the actual outgoing request row/chat and actual iMessage service from documented local evidence.
+7. Treat uncertain send outcomes according to `imsg`'s reported disposition; do not blindly retry a mutation with an uncertain outcome.
+8. One canonical request causes at most one application send mutation unless the caller initiates a new canonical request.
 
 # Receive semantics
 
-Maintain one watcher scoped to the resolved direct chat while iMessage channel operation requires an answer:
+The Bot worker maintains one watcher scoped to the resolved direct chat while a confirmation requires an answer:
 
 ```text
 imsg watch --chat-id <id> --json
 ```
 
-The watcher must begin from a post-send boundary that prevents the outgoing request row and older history from being accepted as a reply. History/cursor recovery may be used so that a fast reply occurring between send confirmation and watcher startup is not lost.
+The watcher begins from a post-send boundary that prevents the outgoing request row and older history from being accepted as a reply. History/cursor recovery may be used so that a fast reply occurring between send confirmation and watcher startup is not lost.
 
-For all modes, an answer candidate must satisfy:
+An answer candidate must satisfy:
 
 ```text
 same configured direct chat
 AND message is strictly after the request send/cursor boundary
 AND message guid differs from the sent request guid when both are available
+AND is_from_me is false for the production distinct-peer topology
 AND text exactly matches <TOKEN> <OPTION_NUMBER>
 AND token maps to exactly one active request
 AND option number is valid
@@ -167,53 +236,32 @@ AND message is not a reaction-only or attachment/image-only answer
 
 If `reply_to_guid` is present on the candidate, it must equal the sent request message guid. An inline reply therefore provides additional correlation evidence but is not mandatory for normal use.
 
-Mode-specific authorship rule:
+Other chat traffic, malformed answers, stale tokens, wrong-chat messages, pre-send history, duplicate/late replies, reactions, and images are ignored for terminal resolution. Exactly one terminal answer may win. Watchers are terminated and reaped on every terminal or cancellation path.
 
-```text
-distinct_peer:
-  is_from_me must be false
+# Same-account compatibility boundary
 
-same_account:
-  is_from_me may be true or false and is not used as the decisive human/device identity test
-```
+Same-account self-message handling may remain as development or diagnostic compatibility so existing local correlation probes are not misrepresented as production evidence. It never establishes production `ready`, release qualification, or notification qualification.
 
-In `same_account` mode, accepting `is_from_me=true` is safe only because the complete strict post-send correlation contract above remains mandatory. Do not weaken the token, chat, cursor, request-state, reaction/attachment, or option checks to compensate for same-account synchronization.
+When sender and recipient resolve to the same Apple/iMessage account topology, production health is `SELF_MESSAGE_UNSUPPORTED`; the channel explains that a dedicated Bot Apple Account is required and sends nothing. It does not wait until after a message mutation to discover the unsupported topology.
 
-Other chat traffic, malformed answers, stale tokens, wrong-chat messages, pre-send history, duplicate/late replies, reactions, and images are ignored for terminal resolution. Exactly one terminal answer may win.
-
-# Same-account synchronization and presentation
-
-A self-addressed iMessage under one Apple Account may be represented by Apple Messages as synchronized sender/recipient-visible copies across the user's devices. The application cannot reliably force Apple Messages to display one native bubble only while preserving the public, SIP-intact transport boundary.
-
-This behavior is treated as a **presentation limitation**, not as a duplicate-send condition, provided application evidence shows one canonical request produced exactly one `imsg send` mutation.
-
-The supported mitigation is the compact renderer in `01_interaction_protocol.md`.
-
-The application MUST NOT attempt visual deduplication through:
-
-```text
-message delete/unsend after delivery
-private IMCore bridge calls
-dylib injection
-SIP disabling
-direct mutation of chat.db
-disabling or altering the user's Messages/iCloud synchronization settings
-```
-
-The user keeps normal Apple Account and Messages synchronization behavior. Product correctness is defined by one application send and one accepted terminal result, not by the number of bubbles Apple chooses to display for a same-account self-addressed message.
+Any retained diagnostic same-account path keeps the complete post-send chat/cursor/GUID/token/option/active-request/reaction/attachment correlation contract, including protection against the outgoing request resolving itself. Diagnostic compatibility does not weaken the production distinct-peer requirement that `is_from_me` be false.
 
 # Image behavior
 
-The channel may send at most one admitted PNG/JPEG decision image from the canonical request. Sending a file must stay on the iMessage path; attachment handling may never cause SMS/MMS fallback.
+The channel may send at most one admitted PNG/JPEG decision image from the canonical request. Sending a file stays on the iMessage path; attachment handling may never cause SMS/MMS fallback.
 
 Incoming images are not accepted as confirmation answers in the initial design.
 
-# Health states
+# Health states and readiness
 
 At minimum distinguish:
 
 ```text
 not_configured
+BOT_SESSION_LOGIN_REQUIRED
+BOT_MESSAGES_ACCOUNT_UNAVAILABLE
+BOT_SENDER_IDENTITY_UNVERIFIED
+SELF_MESSAGE_UNSUPPORTED
 imsg_missing
 permission_missing
 messages_unavailable
@@ -224,26 +272,73 @@ send_failed
 ready
 ```
 
-`bootstrap_required` means a user-approved recipient and identity mode are configured but no deterministic direct chat exists yet. It is a valid first-use state, not authorization to use another transport.
+State meanings specific to the production identity/runtime topology are:
 
-Do not collapse `recipient_not_imessage` into a generic network failure because it is a hard safety boundary.
+- `BOT_SESSION_LOGIN_REQUIRED`: the Bot account/profile is configured, but the dedicated `human-in-loop` graphical/login session has not been established after reboot or is no longer active.
+- `BOT_MESSAGES_ACCOUNT_UNAVAILABLE`: the Bot user session exists, but its Messages account or iMessage activation is unavailable.
+- `BOT_SENDER_IDENTITY_UNVERIFIED`: the active Bot sender identity cannot be established from documented local evidence.
+- `SELF_MESSAGE_UNSUPPORTED`: verified sender and recipient identities belong to the same Apple/iMessage account topology, which is not a production-supported route.
+- `bootstrap_required`: identities and prerequisites are valid, but no deterministic direct chat exists yet; only the first real structured confirmation may bootstrap it through the iMessage-only production path.
+
+Apple Messages is `ready` only when all of these predicates hold:
+
+```text
+bot_macos_user == human-in-loop
+AND bot_user_session_active
+AND bot_messages_account_active
+AND bot_sender_identity_verified
+AND recipient_identity_verified
+AND distinct sender/recipient account evidence satisfies the whole-system invariant
+AND direct conversation resolves deterministically
+AND service == iMessage
+AND imsg available
+AND required permissions available
+```
+
+`recipient_not_imessage` remains a hard safety boundary rather than a generic network error. None of the health states authorizes another transport or carrier fallback.
+
+# Production notification qualification
+
+A real Apple Messages release E2E must prove the complete production topology, not only `imsg` process success or a row appearing in a chat:
+
+```text
+Bot Messages identity
+→ personal iPhone
+→ genuine incoming iMessage
+→ iPhone notification presentation
+→ User reply
+→ Bot imsg watch
+→ strict correlation
+→ canonical choice
+```
+
+The test includes the `HUMAN_NOTIFICATION_CHECKPOINT` defined by `01_interaction_protocol.md`. The iPhone is locked or Messages is not foreground, Messages notifications are enabled, and Focus/DND does not suppress the qualification. The User explicitly confirms a lock-screen notification or banner and the evidence records:
+
+```text
+notification_presentation = HUMAN_VERIFIED
+```
+
+Sound or vibration may be noted but is not a hard or automated assertion. The E2E must also prove one canonical request, exactly one application send mutation, actual outgoing service `iMessage`, one strictly correlated canonical result, and watcher cleanup.
 
 # Design acceptance
 
-The iMessage channel is conforming only when static review and real macOS E2E evidence show:
+The iMessage channel is conforming only when implementation and real macOS E2E evidence show:
 
 ```text
-no reachable SMS/carrier delivery path
+the dedicated human-in-loop macOS session owns Bot Messages/imsg/worker state
+the main coordinator crosses the user boundary only through narrow authenticated local IPC
+sender and recipient identities satisfy the whole-system distinct-account invariant before send
+self-addressed production configuration fails as SELF_MESSAGE_UNSUPPORTED before mutation
+post-reboot absence of the Bot login session reports BOT_SESSION_LOGIN_REQUIRED with actionable recovery
+no reachable SMS/MMS/RCS/carrier/paid-gateway delivery path
 first-use bootstrap remains explicit iMessage-only and fail-closed
+actual outgoing service is proven to be iMessage
 resolved send/watch remain scoped to one configured direct conversation
-strict post-send correlation rejects ambiguous/stale/wrong-chat replies
-same_account works without requiring a second Apple Account
-self-authored synchronization cannot make the outgoing request itself resolve as an answer
+strict post-send correlation rejects ambiguous, stale, wrong-chat, outgoing, reaction, and attachment candidates
 one canonical request causes exactly one application send mutation
-compact rendering keeps same-account duplicate presentation bounded and decision-readable
-no delete/unsend/private-bridge workaround is introduced
 exactly one terminal answer is accepted
 watcher processes are terminated/reaped on every terminal path
+notification presentation is HUMAN_VERIFIED during production release qualification
 ```
 
 A non-iMessage recipient must fail closed without intentionally sending an SMS/MMS/RCS negative test.

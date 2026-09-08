@@ -168,20 +168,17 @@ Budgeting rules:
 5. A request may exceed the 500-character target when genuinely necessary but must remain within the 700-character hard limit.
 6. The renderer never splits one decision across multiple iMessages merely to bypass the budget.
 
-# Same-account presentation behavior
+# Human notification checkpoint
 
-When Mac and iPhone use the same Apple Account, Apple Messages synchronization may make one logical self-addressed confirmation appear as more than one visible bubble/copy across the synchronized conversation. This is a presentation consequence of the platform topology, not permission to emit duplicate application sends.
+Production Apple Messages release qualification includes a `HUMAN_NOTIFICATION_CHECKPOINT`. The automated path proves the structured request/result lifecycle; the User separately confirms that the incoming iMessage notification was presented on the locked or non-foreground iPhone as a lock-screen notification or banner.
 
-The application contract is therefore:
+Qualification records:
 
 ```text
-one canonical request
-→ exactly one application send mutation
-→ compact notification rendering
-→ exactly one accepted terminal result
+notification_presentation = HUMAN_VERIFIED
 ```
 
-The product does not attempt to hide the platform-level duplicate by deleting/unsending one copy, modifying Messages databases, using private IMCore APIs, disabling SIP, or otherwise altering Apple synchronization behavior. Compact rendering is the supported mitigation.
+The iPhone has Messages notifications enabled and Focus/DND does not suppress the qualification message. Audible or haptic perception may be recorded as an optional observation but is not an automated or hard acceptance assertion. Apple Messages deployment, identity, and session details remain owned by `03_imessage_channel.md`.
 
 # Image admission
 
@@ -217,4 +214,4 @@ Feishu card callbacks map directly to the same stable choice identity. Agents ne
 
 # Design acceptance
 
-This concern is complete when every supported iMessage reply is unambiguously correlated to one active request and one canonical choice, every repository-associated phone notification visibly identifies its GitHub repository by repository name, the phone surface contains only decision-relevant content, normal confirmations remain compact enough that same-account duplicate presentation has low visual cost, critical information cannot be silently truncated, and unsupported content fails without generating a misleading partial decision surface.
+This concern is complete when every supported iMessage reply is unambiguously correlated to one active request and one canonical choice, every repository-associated phone notification visibly identifies its GitHub repository by repository name, the phone surface contains only decision-relevant content, the production release E2E includes the human-verified notification checkpoint, critical information cannot be silently truncated, and unsupported content fails without generating a misleading partial decision surface.
