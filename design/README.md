@@ -11,6 +11,7 @@ This directory is the sole current living-design authority. Historical reasoning
 | `04_feishu_channel.md` | `feishu-channel` | Feishu card transport retained from AskHuman and aligned with the canonical protocol |
 | `05_mcp_interface.md` | `mcp-interface` | Minimal public MCP `ask_human` blocking decision + `notify_human` non-blocking notification surface |
 | `06_codex_integration.md` | `codex-integration` | Machine-wide Codex activation, checkpoint classification, terminal reporting, and failure semantics |
+| `07_macos_runtime_deployment.md` | `macos-runtime-deployment` | Stable macOS code identity, one-time privileged bootstrap, TCC permission lifecycle, protected-folder behavior, and minimal user switching |
 
 Routine reading: start here, then load only the topic that owns the active concern. Load `00_overview.md` only when whole-system context is needed.
 
