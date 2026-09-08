@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>human-in-loop uses Apple Events only to send approved iMessage notifications through Messages.</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>AskHuman 需要使用麦克风进行语音输入。</string>
   <key>NSSpeechRecognitionUsageDescription</key>

@@ -11,6 +11,8 @@ const SHARED_BINARY: &str = "/Users/Shared/human-in-loop/bin/human-in-loop";
 const SHARED_IMSG: &str = "/Users/Shared/human-in-loop/bin/imsg";
 const BOT_SENDER_ENV: &str = "HUMAN_IN_LOOP_BOT_SENDER";
 const RECIPIENT_ENV: &str = "HUMAN_IN_LOOP_IMESSAGE_RECIPIENT";
+#[cfg(target_os = "macos")]
+const MESSAGES_BUNDLE_ID: &[u8] = b"com.apple.MobileSMS";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -208,6 +210,10 @@ pub enum WorkerRequest {
         recipient: String,
         text: String,
     },
+    Automation {
+        recipient: String,
+        prompt: bool,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -222,6 +228,7 @@ pub enum WorkerResponse {
     Ready,
     Answer { choice_index: usize },
     Sent,
+    Automation { state: String },
     Error { state: String },
 }
 
@@ -248,7 +255,8 @@ fn request_recipient(request: &WorkerRequest) -> &str {
     match request {
         WorkerRequest::Health { recipient }
         | WorkerRequest::Confirm { recipient, .. }
-        | WorkerRequest::Notify { recipient, .. } => recipient,
+        | WorkerRequest::Notify { recipient, .. }
+        | WorkerRequest::Automation { recipient, .. } => recipient,
     }
 }
 
@@ -281,7 +289,7 @@ fn validate_request(
     }
 
     match request {
-        WorkerRequest::Health { .. } => Ok(()),
+        WorkerRequest::Health { .. } | WorkerRequest::Automation { .. } => Ok(()),
         WorkerRequest::Notify { text, .. } => {
             if text.is_empty() || text.chars().count() > super::imessage::MAX_RENDERED_CHARS {
                 Err(HealthState::MessagesUnavailable)
@@ -431,6 +439,10 @@ fn health_state(value: &str) -> crate::channels::imessage::HealthState {
         HealthState::BotMessagesAccountUnavailable,
         HealthState::BotSenderIdentityUnverified,
         HealthState::SelfMessageUnsupported,
+        HealthState::AutomationReady,
+        HealthState::AutomationConsentRequired,
+        HealthState::AutomationDenied,
+        HealthState::AutomationTargetUnavailable,
         HealthState::ImsgMissing,
         HealthState::PermissionMissing,
         HealthState::MessagesUnavailable,
@@ -445,6 +457,93 @@ fn health_state(value: &str) -> crate::channels::imessage::HealthState {
     .into_iter()
     .find(|state| state.as_str() == value)
     .unwrap_or(HealthState::MessagesUnavailable)
+}
+
+fn automation_state_from_status(status: i32) -> crate::channels::imessage::HealthState {
+    use crate::channels::imessage::HealthState;
+    match status {
+        0 => HealthState::AutomationReady,
+        -1744 => HealthState::AutomationConsentRequired,
+        -600 => HealthState::AutomationTargetUnavailable,
+        -1743 => HealthState::AutomationDenied,
+        _ => HealthState::AutomationDenied,
+    }
+}
+
+fn health_after_automation(
+    automation: crate::channels::imessage::HealthState,
+    channel: crate::channels::imessage::HealthState,
+) -> crate::channels::imessage::HealthState {
+    if automation == crate::channels::imessage::HealthState::AutomationReady {
+        channel
+    } else {
+        automation
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn automation_preflight(prompt: bool) -> crate::channels::imessage::HealthState {
+    use std::ffi::c_void;
+
+    #[repr(C)]
+    struct AEDesc {
+        descriptor_type: u32,
+        data_handle: *mut *mut c_void,
+    }
+
+    #[link(name = "ApplicationServices", kind = "framework")]
+    extern "C" {
+        fn AECreateDesc(
+            type_code: u32,
+            data: *const c_void,
+            data_size: isize,
+            result: *mut AEDesc,
+        ) -> i16;
+        fn AEDisposeDesc(desc: *mut AEDesc) -> i16;
+        fn AEDeterminePermissionToAutomateTarget(
+            target: *const AEDesc,
+            event_class: u32,
+            event_id: u32,
+            ask_user_if_needed: u8,
+        ) -> i32;
+    }
+
+    const TYPE_APPLICATION_BUNDLE_ID: u32 = u32::from_be_bytes(*b"bund");
+    const TYPE_WILDCARD: u32 = u32::from_be_bytes(*b"****");
+    let mut target = AEDesc {
+        descriptor_type: 0,
+        data_handle: std::ptr::null_mut(),
+    };
+    let created = unsafe {
+        AECreateDesc(
+            TYPE_APPLICATION_BUNDLE_ID,
+            MESSAGES_BUNDLE_ID.as_ptr().cast(),
+            MESSAGES_BUNDLE_ID.len() as isize,
+            &mut target,
+        )
+    };
+    if created != 0 {
+        return crate::channels::imessage::HealthState::AutomationTargetUnavailable;
+    }
+    let status = unsafe {
+        AEDeterminePermissionToAutomateTarget(
+            &target,
+            TYPE_WILDCARD,
+            TYPE_WILDCARD,
+            u8::from(prompt),
+        )
+    };
+    unsafe {
+        AEDisposeDesc(&mut target);
+    }
+    automation_state_from_status(status)
+}
+
+#[cfg(target_os = "macos")]
+async fn automation_preflight_async(prompt: bool) -> crate::channels::imessage::HealthState {
+    tokio::task::spawn_blocking(move || automation_preflight(prompt))
+        .await
+        .unwrap_or(crate::channels::imessage::HealthState::AutomationDenied)
 }
 
 #[cfg(target_os = "macos")]
@@ -466,6 +565,33 @@ pub async fn health(
     }
     match client.next().await {
         Ok(WorkerResponse::Health { state }) | Ok(WorkerResponse::Error { state }) => {
+            health_state(&state)
+        }
+        _ => crate::channels::imessage::HealthState::MessagesUnavailable,
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub async fn automation(
+    config: &crate::config::IMessageChannelConfig,
+    prompt: bool,
+) -> crate::channels::imessage::HealthState {
+    let mut client = match WorkerClient::connect().await {
+        Ok(client) => client,
+        Err(state) => return state,
+    };
+    if client
+        .send(&WorkerRequest::Automation {
+            recipient: config.recipient.clone(),
+            prompt,
+        })
+        .await
+        .is_err()
+    {
+        return crate::channels::imessage::HealthState::BotSessionLoginRequired;
+    }
+    match client.next().await {
+        Ok(WorkerResponse::Automation { state }) | Ok(WorkerResponse::Error { state }) => {
             health_state(&state)
         }
         _ => crate::channels::imessage::HealthState::MessagesUnavailable,
@@ -572,6 +698,10 @@ async fn prepare_confirmation(
 > {
     use crate::channels::imessage;
 
+    let automation = automation_preflight_async(false).await;
+    if automation != imessage::HealthState::AutomationReady {
+        return Err(automation);
+    }
     let readiness = imessage::prepare(config).await?;
     let boundary = imessage::pre_send_boundary(&readiness).await?;
     let receipt = imessage::send(config, text, None).await?;
@@ -589,6 +719,10 @@ async fn send_notification(
 ) -> Result<(), crate::channels::imessage::HealthState> {
     use crate::channels::imessage;
 
+    let automation = automation_preflight_async(false).await;
+    if automation != imessage::HealthState::AutomationReady {
+        return Err(automation);
+    }
     let readiness = imessage::prepare(config).await?;
     let boundary = imessage::pre_send_boundary(&readiness).await?;
     let receipt = imessage::send(config, text, None).await?;
@@ -637,13 +771,29 @@ async fn handle_connection(
 
     match request {
         WorkerRequest::Health { .. } => {
-            let state = match imessage::health_local(&channel).await {
-                HealthState::MessagesUnavailable => HealthState::BotMessagesAccountUnavailable,
-                state => state,
+            let automation = automation_preflight_async(false).await;
+            let channel_state = if automation == HealthState::AutomationReady {
+                match imessage::health_local(&channel).await {
+                    HealthState::MessagesUnavailable => HealthState::BotMessagesAccountUnavailable,
+                    state => state,
+                }
+            } else {
+                HealthState::AutomationReady
             };
+            let state = health_after_automation(automation, channel_state);
             let _ = write_frame(
                 &mut write,
                 &WorkerResponse::Health {
+                    state: state.as_str().to_string(),
+                },
+            )
+            .await;
+        }
+        WorkerRequest::Automation { prompt, .. } => {
+            let state = automation_preflight_async(prompt).await;
+            let _ = write_frame(
+                &mut write,
+                &WorkerResponse::Automation {
                     state: state.as_str().to_string(),
                 },
             )
@@ -873,8 +1023,16 @@ pub fn dispatch(args: &[String]) -> Result<String, String> {
             let state = crate::cli::cfgio::block_on(health(&config.channels.imessage));
             Ok(state.as_str().to_string())
         }
+        Some("automation") if args.len() == 2 && matches!(args[1].as_str(), "status" | "request") => {
+            let config = crate::config::AppConfig::load_without_secrets();
+            let state = crate::cli::cfgio::block_on(automation(
+                &config.channels.imessage,
+                args[1] == "request",
+            ));
+            Ok(state.as_str().to_string())
+        }
         _ => Err(
-            "usage: imessage-worker <install --coordinator-user <short-name>|run|status>".into(),
+            "usage: imessage-worker <install --coordinator-user <short-name>|run|status|automation <status|request>>".into(),
         ),
     }
 }
@@ -887,6 +1045,7 @@ pub fn dispatch(_args: &[String]) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::channels::imessage::HealthState;
     use crate::config::{IMessageChannelConfig, IMessageIdentityMode};
 
     #[test]
@@ -969,6 +1128,66 @@ mod tests {
             r#"{"operation":"confirm","recipient":"person@example.com","requestId":"r1","token":"7F32","text":"Question","choiceIndices":[0,1],"expiresAtMs":2000,"file":"/tmp/a"}"#
         )
         .is_err());
+
+        let automation: WorkerRequest = serde_json::from_str(
+            r#"{"operation":"automation","recipient":"person@example.com","prompt":false}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            automation,
+            WorkerRequest::Automation { prompt: false, .. }
+        ));
+        assert!(serde_json::from_str::<WorkerRequest>(
+            r#"{"operation":"automation","recipient":"person@example.com","prompt":false,"command":"send"}"#
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn automation_statuses_are_distinct_and_fail_closed() {
+        assert_eq!(
+            automation_state_from_status(0),
+            HealthState::AutomationReady
+        );
+        assert_eq!(
+            automation_state_from_status(-1744),
+            HealthState::AutomationConsentRequired
+        );
+        assert_eq!(
+            automation_state_from_status(-1743),
+            HealthState::AutomationDenied
+        );
+        assert_eq!(
+            automation_state_from_status(-600),
+            HealthState::AutomationTargetUnavailable
+        );
+        assert_eq!(
+            automation_state_from_status(-1),
+            HealthState::AutomationDenied
+        );
+    }
+
+    #[test]
+    fn chat_readiness_is_hidden_until_automation_is_ready() {
+        assert_eq!(
+            health_after_automation(
+                HealthState::AutomationConsentRequired,
+                HealthState::BootstrapRequired,
+            ),
+            HealthState::AutomationConsentRequired
+        );
+        assert_eq!(
+            health_after_automation(HealthState::AutomationDenied, HealthState::Ready),
+            HealthState::AutomationDenied
+        );
+        assert_eq!(
+            health_after_automation(HealthState::AutomationReady, HealthState::BootstrapRequired),
+            HealthState::BootstrapRequired
+        );
+        assert_eq!(
+            health_after_automation(HealthState::AutomationReady, HealthState::Ready),
+            HealthState::Ready
+        );
     }
 
     #[tokio::test]

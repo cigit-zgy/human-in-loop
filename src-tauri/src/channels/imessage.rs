@@ -12,7 +12,7 @@ use std::process::Stdio;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, ChildStdout, Command};
-use tokio::time::{timeout, Duration};
+use tokio::time::{sleep, timeout, Duration, Instant};
 
 pub const MIN_TOKEN_CHARS: usize = 4;
 pub const MAX_SOURCE_PROJECT_CHARS: usize = 80;
@@ -29,6 +29,9 @@ pub(crate) const IMSG_EXECUTABLE_ENV: &str = "HUMAN_IN_LOOP_IMSG_EXECUTABLE";
 const CHAT_SCAN_LIMIT: usize = 10_000;
 const CHAT_SCAN_TIMEOUT: Duration = Duration::from_secs(90);
 const POST_SEND_CHAT_LIMIT: usize = 20;
+const POST_SEND_HISTORY_LIMIT: usize = 20;
+const POST_SEND_RESOLUTION_TIMEOUT: Duration = Duration::from_secs(10);
+const POST_SEND_RESOLUTION_RETRY: Duration = Duration::from_millis(100);
 
 fn imsg_program_from_override(value: Option<std::ffi::OsString>) -> std::ffi::OsString {
     value
@@ -398,6 +401,10 @@ pub enum HealthState {
     BotMessagesAccountUnavailable,
     BotSenderIdentityUnverified,
     SelfMessageUnsupported,
+    AutomationReady,
+    AutomationConsentRequired,
+    AutomationDenied,
+    AutomationTargetUnavailable,
     ImsgMissing,
     PermissionMissing,
     MessagesUnavailable,
@@ -418,6 +425,10 @@ impl HealthState {
             Self::BotMessagesAccountUnavailable => "BOT_MESSAGES_ACCOUNT_UNAVAILABLE",
             Self::BotSenderIdentityUnverified => "BOT_SENDER_IDENTITY_UNVERIFIED",
             Self::SelfMessageUnsupported => "SELF_MESSAGE_UNSUPPORTED",
+            Self::AutomationReady => "automation_ready",
+            Self::AutomationConsentRequired => "automation_consent_required",
+            Self::AutomationDenied => "automation_denied",
+            Self::AutomationTargetUnavailable => "automation_target_unavailable",
             Self::ImsgMissing => "imsg_missing",
             Self::PermissionMissing => "permission_missing",
             Self::MessagesUnavailable => "messages_unavailable",
@@ -761,6 +772,62 @@ fn resolve_sent_request(
     }
 }
 
+enum BootstrapResolutionStep {
+    Ready(ResolvedRequest),
+    Retry,
+    Fail(HealthState),
+}
+
+fn bootstrap_resolution_step(
+    config: &IMessageChannelConfig,
+    boundary: &PreSendBoundary,
+    receipt: &SendReceipt,
+    text: &str,
+    chats: &[ChatRecord],
+    messages: &[InboundMessage],
+) -> BootstrapResolutionStep {
+    match resolve_sent_request(config, boundary, receipt, text, chats, messages) {
+        Ok(resolved) => BootstrapResolutionStep::Ready(resolved),
+        Err(HealthState::MessagesUnavailable) => BootstrapResolutionStep::Retry,
+        Err(state) => BootstrapResolutionStep::Fail(state),
+    }
+}
+
+async fn resolve_bootstrap_after_send(
+    config: &IMessageChannelConfig,
+    boundary: &PreSendBoundary,
+    receipt: &SendReceipt,
+    text: &str,
+) -> Result<ResolvedRequest, HealthState> {
+    let deadline = Instant::now() + POST_SEND_RESOLUTION_TIMEOUT;
+    loop {
+        let chats = list_chats(POST_SEND_CHAT_LIMIT, Duration::from_secs(2)).await?;
+        let mut messages = Vec::new();
+        let mut history_unavailable = false;
+        for chat in chats
+            .iter()
+            .filter(|chat| post_send_chat_matches(config, chat))
+        {
+            match history(chat.id, POST_SEND_HISTORY_LIMIT).await {
+                Ok(mut rows) => messages.append(&mut rows),
+                Err(HealthState::MessagesUnavailable) => history_unavailable = true,
+                Err(state) => return Err(state),
+            }
+        }
+        if !history_unavailable {
+            match bootstrap_resolution_step(config, boundary, receipt, text, &chats, &messages) {
+                BootstrapResolutionStep::Ready(resolved) => return Ok(resolved),
+                BootstrapResolutionStep::Fail(state) => return Err(state),
+                BootstrapResolutionStep::Retry => {}
+            }
+        }
+        if Instant::now() >= deadline {
+            return Err(HealthState::MessagesUnavailable);
+        }
+        sleep(POST_SEND_RESOLUTION_RETRY).await;
+    }
+}
+
 pub async fn resolve_after_send(
     config: &IMessageChannelConfig,
     readiness: &Readiness,
@@ -773,6 +840,9 @@ pub async fn resolve_after_send(
         .is_some_and(|row_id| receipt.row_id <= row_id)
     {
         return Err(HealthState::MessagesUnavailable);
+    }
+    if matches!(readiness, Readiness::BootstrapRequired) {
+        return resolve_bootstrap_after_send(config, boundary, receipt, text).await;
     }
     let message = read_sent_event(receipt, boundary, text).await?;
     let chats = list_chats(POST_SEND_CHAT_LIMIT, Duration::from_secs(10)).await?;
@@ -1510,6 +1580,56 @@ mod tests {
             readiness_from_chats(&config, &[]),
             Ok(Readiness::BootstrapRequired)
         );
+    }
+
+    #[test]
+    fn bootstrap_resolution_retries_until_the_new_chat_is_queryable() {
+        let mut config = imessage_config();
+        config.chat_id = None;
+        config.chat_guid.clear();
+        let receipt = SendReceipt {
+            row_id: 101,
+            guid: "REQUEST-GUID".into(),
+        };
+        let boundary = PreSendBoundary {
+            latest_row_id: None,
+            started_at_ms: 0,
+        };
+
+        assert!(matches!(
+            bootstrap_resolution_step(&config, &boundary, &receipt, "rendered request", &[], &[],),
+            BootstrapResolutionStep::Retry
+        ));
+
+        let chats = vec![ChatRecord {
+            id: 42,
+            guid: Some("iMessage;-;direct".into()),
+            service: "iMessage".into(),
+            is_group: false,
+            participants: vec![config.recipient.clone()],
+        }];
+        let messages = vec![InboundMessage {
+            id: receipt.row_id,
+            chat_id: 42,
+            guid: receipt.guid.clone(),
+            reply_to_guid: None,
+            created_at: "2026-09-07T10:00:00.000Z".into(),
+            is_from_me: true,
+            text: Some("rendered request".into()),
+            is_reaction: false,
+            has_attachments: false,
+        }];
+        assert!(matches!(
+            bootstrap_resolution_step(
+                &config,
+                &boundary,
+                &receipt,
+                "rendered request",
+                &chats,
+                &messages,
+            ),
+            BootstrapResolutionStep::Ready(_)
+        ));
     }
 
     #[test]

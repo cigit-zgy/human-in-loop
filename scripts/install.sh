@@ -28,6 +28,10 @@ Usage: ./scripts/install.sh [--global] [--release]
 Environment:
   INSTALL_DIR   Explicit install directory (wins over auto-detect;
                 with --global, still defaults to ~/.local/bin when unset).
+  CODESIGN_IDENTITY
+                Explicit Apple Development / Developer ID identity. On macOS,
+                the dedicated "human-in-loop Local Code Signing" identity is
+                used when this is unset. Ad-hoc production install is refused.
 EOF
       exit 0
       ;;
@@ -70,7 +74,8 @@ sign_via_gui_launchd() {
   local target="$2"
   local sign_dir status_file log_file runner_file plist_file label service gui_rc
 
-  sign_dir="$(mktemp -d "${TMPDIR:-/tmp}/human-in-loop-sign.XXXXXX")"
+  mkdir -p "$REPO_ROOT/tmp"
+  sign_dir="$(mktemp -d "$REPO_ROOT/tmp/HUMAN_IN_LOOP_SIGN.XXXXXX")"
   status_file="$sign_dir/status"
   log_file="$sign_dir/codesign.log"
   runner_file="$sign_dir/sign.sh"
@@ -178,6 +183,7 @@ echo "==> 安装到 $INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 INSTALLED_BIN="$INSTALL_DIR/human-in-loop"
 INSTALL_STATE="$INSTALL_DIR/.human-in-loop-install-state"
+IDENTITY_STATE="$INSTALL_DIR/.human-in-loop-designated-requirement"
 SOURCE_HASH="$(_file_sha256 "$BIN_PATH" 2>/dev/null || true)"
 SKIP_COPY=0
 if [ -n "$SOURCE_HASH" ] && [ -f "$INSTALLED_BIN" ] && [ -f "$INSTALL_STATE" ]; then
@@ -185,50 +191,85 @@ if [ -n "$SOURCE_HASH" ] && [ -f "$INSTALLED_BIN" ] && [ -f "$INSTALL_STATE" ]; 
   STATE_INSTALLED="$(sed -n 's/^installed=//p' "$INSTALL_STATE" | head -n1)"
   INSTALLED_HASH="$(_file_sha256 "$INSTALLED_BIN" 2>/dev/null || true)"
   if [ "$STATE_SOURCE" = "$SOURCE_HASH" ] && [ "$STATE_INSTALLED" = "$INSTALLED_HASH" ]; then
-    SKIP_COPY=1
-    echo "    已安装二进制内容未变化，跳过复制与签名"
+    if [ "$(uname)" != "Darwin" ]; then
+      SKIP_COPY=1
+    elif [ -s "$IDENTITY_STATE" ]; then
+      EXPECTED_REQUIREMENT="$(cat "$IDENTITY_STATE")"
+      if codesign --verify -R="$EXPECTED_REQUIREMENT" "$INSTALLED_BIN" 2>/dev/null; then
+        SKIP_COPY=1
+      fi
+    fi
+    if [ "$SKIP_COPY" -eq 1 ]; then
+      echo "    已安装二进制内容与稳定签名未变化，跳过复制与签名"
+    fi
   fi
 fi
 
 if [ "$SKIP_COPY" -eq 0 ]; then
-  cp "$BIN_PATH" "$INSTALLED_BIN"
-  chmod 0755 "$INSTALLED_BIN"
+  CANDIDATE="$INSTALL_DIR/.human-in-loop.next.$$"
+  REQUIREMENT_TMP=""
+  trap 'rm -f "${CANDIDATE:-}" "${REQUIREMENT_TMP:-}"' EXIT
+  cp "$BIN_PATH" "$CANDIDATE"
+  chmod 0755 "$CANDIDATE"
 
   if [ "$(uname)" = "Darwin" ]; then
     # 清除 quarantine，降低拷贝后被 Gatekeeper 拦截的概率
-    xattr -d com.apple.quarantine "$INSTALL_DIR/human-in-loop" 2>/dev/null || true
-    # Sign with a stable identity + fixed identifier so the OS keychain trusts the binary across
-    # rebuilds (its designated requirement is cdhash-independent) → secret reads stay prompt-free.
-    # Identity: $CODESIGN_IDENTITY if set, else prefer a "Developer ID Application" cert, else the
-    # first available codesigning cert, else ad-hoc (per-build keychain prompts).
-    #
-    # Prefer Developer ID *deterministically*: `find-identity` order is not stable, and when both a
-    # "Developer ID Application" and an "Apple Development" cert exist, picking whichever lands first
-    # flips the binary's designated requirement between installs → the keychain ACL stops trusting it
-    # → silent secret reads break (esp. for the background daemon). Developer ID's DR is also cdhash-
-    # independent and non-expiring, so pinning it keeps the ACL valid across rebuilds.
+    xattr -d com.apple.quarantine "$CANDIDATE" 2>/dev/null || true
+    # TCC follows the designated requirement. Select one stable signer deterministically; never
+    # activate an ad-hoc production candidate whose DR changes with every rebuild.
     IDENTITY="${CODESIGN_IDENTITY:-}"
     if [ -z "$IDENTITY" ]; then
       IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null | awk '/Developer ID Application/{print $2; exit}')"
     fi
     if [ -z "$IDENTITY" ]; then
-      IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null | awk '/^[[:space:]]*[0-9]+\)/{print $2; exit}')"
+      IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null | awk '/Apple Development/{print $2; exit}')"
     fi
-    [ -z "$IDENTITY" ] && IDENTITY="-"
-    if [ "$IDENTITY" = "-" ]; then
-      echo "==> 签名 (ad-hoc; 设置 CODESIGN_IDENTITY 可避免每次重装的钥匙串弹框)"
-      codesign -i io.github.cigit-zgy.human-in-loop --force --timestamp=none --sign "$IDENTITY" "$INSTALLED_BIN"
-    else
-      echo "==> 签名 (identity: $IDENTITY, identifier: io.github.cigit-zgy.human-in-loop)"
-      if ! codesign -i io.github.cigit-zgy.human-in-loop --force --timestamp=none --sign "$IDENTITY" "$INSTALLED_BIN"; then
-        echo "==> 后台进程无法使用正式签名私钥，改由用户 GUI 会话完成签名"
-        sign_via_gui_launchd "$IDENTITY" "$INSTALLED_BIN" || {
-          echo "错误: 正式签名失败，安装已中止" >&2
-          exit 1
-        }
+    if [ -z "$IDENTITY" ] && security find-identity -v -p codesigning 2>/dev/null | grep -Fq '"human-in-loop Local Code Signing"'; then
+      IDENTITY="human-in-loop Local Code Signing"
+    fi
+    if [ -z "$IDENTITY" ]; then
+      echo "错误: 未找到稳定的 macOS Code Signing identity。先运行 scripts/macos-bootstrap.sh。" >&2
+      exit 1
+    fi
+    echo "==> 稳定签名 (identifier: io.github.cigit-zgy.human-in-loop)"
+    if ! codesign -i io.github.cigit-zgy.human-in-loop --force --timestamp=none --sign "$IDENTITY" "$CANDIDATE"; then
+      echo "==> 后台进程无法使用签名私钥，改由当前用户 GUI launchd 域完成签名"
+      sign_via_gui_launchd "$IDENTITY" "$CANDIDATE" || {
+        echo "错误: 稳定签名失败，安装已中止" >&2
+        exit 1
+      }
+    fi
+    codesign --verify --strict "$CANDIDATE"
+    ACTUAL_REQUIREMENT="$(codesign -d -r- "$CANDIDATE" 2>&1 | sed -n 's/^designated => //p')"
+    if [ -z "$ACTUAL_REQUIREMENT" ] || printf '%s' "$ACTUAL_REQUIREMENT" | grep -q 'cdhash'; then
+      echo "错误: candidate 没有稳定 designated requirement" >&2
+      exit 1
+    fi
+
+    EXPECTED_REQUIREMENT=""
+    if [ -s "$IDENTITY_STATE" ]; then
+      EXPECTED_REQUIREMENT="$(cat "$IDENTITY_STATE")"
+    elif [ -f "$INSTALLED_BIN" ]; then
+      EXPECTED_REQUIREMENT="$(codesign -d -r- "$INSTALLED_BIN" 2>&1 | sed -n 's/^designated => //p' || true)"
+    fi
+    if [ -n "$EXPECTED_REQUIREMENT" ] && ! codesign --verify -R="$EXPECTED_REQUIREMENT" "$CANDIDATE" 2>/dev/null; then
+      if printf '%s' "$EXPECTED_REQUIREMENT" | grep -q 'cdhash' \
+        && [ "${HUMAN_IN_LOOP_ALLOW_IDENTITY_MIGRATION:-0}" = "1" ] \
+        && [ ! -s "$IDENTITY_STATE" ]; then
+        echo "==> 一次性迁移旧 ad-hoc requester 到稳定签名 identity"
+      else
+        echo "错误: RUNTIME_IDENTITY_MIGRATION_REQUIRED" >&2
+        exit 1
       fi
     fi
-    codesign --verify --strict "$INSTALLED_BIN"
+    REQUIREMENT_TMP="$IDENTITY_STATE.tmp.$$"
+    printf '%s\n' "$ACTUAL_REQUIREMENT" > "$REQUIREMENT_TMP"
+  fi
+
+  mv "$CANDIDATE" "$INSTALLED_BIN"
+  CANDIDATE=""
+  if [ "$(uname)" = "Darwin" ]; then
+    mv "$REQUIREMENT_TMP" "$IDENTITY_STATE"
   fi
 
   if [ -n "$SOURCE_HASH" ]; then
