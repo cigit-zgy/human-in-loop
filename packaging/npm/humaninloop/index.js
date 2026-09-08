@@ -1,7 +1,7 @@
 "use strict";
 
-// 解析当前平台的 AskHuman 二进制路径，供下游程序集成调用。
-// 解析顺序：环境变量 ASKHUMAN_BINARY（兼容旧 HUMANINLOOP_BINARY）→ 平台子包 → 系统 PATH。
+// Resolve the human-in-loop binary. ASKHUMAN_BINARY and AskHuman executable names
+// remain legacy compatibility aliases, never the primary product identity.
 
 const fs = require("fs");
 const path = require("path");
@@ -14,8 +14,10 @@ const PLATFORM_PACKAGES = {
   "linux-x64": "@humaninloop/linux-x64",
 };
 
-function binName() {
-  return process.platform === "win32" ? "AskHuman.exe" : "AskHuman";
+function binNames() {
+  return process.platform === "win32"
+    ? ["human-in-loop.exe", "AskHuman.exe"]
+    : ["human-in-loop", "AskHuman"];
 }
 
 function platformKey() {
@@ -39,27 +41,31 @@ function isExecutableFile(p) {
 }
 
 function fromEnv() {
-  const p = process.env.ASKHUMAN_BINARY || process.env.HUMANINLOOP_BINARY;
+  const p = process.env.HUMANINLOOP_BINARY || process.env.ASKHUMAN_BINARY;
   return p && fs.existsSync(p) ? p : null;
 }
 
 function fromPlatformPackage() {
   const pkg = PLATFORM_PACKAGES[platformKey()];
   if (!pkg) return null;
-  try {
-    return require.resolve(`${pkg}/bin/${binName()}`);
-  } catch {
-    return null;
+  for (const name of binNames()) {
+    try {
+      return require.resolve(`${pkg}/bin/${name}`);
+    } catch {
+      // Try the legacy compatibility name.
+    }
   }
+  return null;
 }
 
 function fromPath() {
-  const exe = binName();
   const dirs = (process.env.PATH || "").split(path.delimiter);
   for (const dir of dirs) {
     if (!dir) continue;
-    const candidate = path.join(dir, exe);
-    if (fs.existsSync(candidate)) return candidate;
+    for (const name of binNames()) {
+      const candidate = path.join(dir, name);
+      if (fs.existsSync(candidate)) return candidate;
+    }
   }
   return null;
 }

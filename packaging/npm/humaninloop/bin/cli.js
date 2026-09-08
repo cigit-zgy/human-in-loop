@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 "use strict";
 
-// 全局命令入口（npm i -g humaninloop 后的 `AskHuman`）：
+// Global command entry for `human-in-loop`; `AskHuman` is a legacy compatibility alias.
 // 解析当前平台二进制并透传 argv 与退出码。
 // 下游程序集成请直接使用 require("humaninloop").getBinaryPath()，不必经此 shim。
 
@@ -11,7 +11,7 @@ const { getBinaryPath } = require("../index.js");
 const bin = getBinaryPath();
 if (!bin) {
   process.stderr.write(
-    "humaninloop: 未找到当前平台的 AskHuman 二进制。\n" +
+      "humaninloop: 未找到当前平台的 human-in-loop 二进制。\n" +
       "请确认对应平台子包已安装，或设置环境变量 HUMANINLOOP_BINARY 指向二进制。\n"
   );
   process.exit(1);

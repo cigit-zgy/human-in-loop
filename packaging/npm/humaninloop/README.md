@@ -1,57 +1,36 @@
-# askhuman
+# humaninloop
 
-Human-in-the-loop interaction tool with two maintained remote channels: Feishu and Apple Messages (iMessage only). The `AskHuman` CLI returns a structured human decision to the calling AI assistant.
+Node wrapper for the independent **human-in-loop** project. The maintained
+remote channels are Feishu and Apple Messages with strict iMessage-only
+delivery.
 
-Human-in-the-loop 交互工具，维护的远程渠道仅为飞书与 Apple 信息（仅 iMessage）。`AskHuman` CLI 会把结构化的人类决定返回给调用它的 AI 助手。
+The repository's `v0.1.0` publication is a source release only; it does not
+publish or promise notarized downloadable binaries or an npm binary release.
 
-Under the hood it's a single executable (Tauri 2 / Rust). This npm package distributes it via per-platform subpackages: installing fetches only the one binary matching your current platform.
-
-## Standalone use
-
-```bash
-npm i -g askhuman
-AskHuman "Continue?" -o "Continue" -o "Stop"
-```
-
-## As a dependency (programmatic use)
+For a future npm distribution, the primary command is:
 
 ```bash
-npm i askhuman
+npm i -g humaninloop
+human-in-loop --help
 ```
+
+The `AskHuman` command remains a legacy compatibility alias for existing
+wrapper consumers. It is not the project or package identity.
+
+Programmatic consumers may resolve the installed binary:
 
 ```js
-import { getBinaryPath, isAvailable } from "askhuman";
-import { spawnSync } from "node:child_process";
-
-if (!isAvailable()) {
-  // Binary not in place: skip the human-confirmation step to avoid blocking the flow
-} else {
-  const r = spawnSync(getBinaryPath(), ["Continue?", "-o", "Continue", "-o", "Stop"], {
-    encoding: "utf8",
-  });
-  if (r.status === 3) {
-    // No maintained channel is configured: degrade gracefully
-  } else if (r.status === 0) {
-    // Success: parse the result blocks from r.stdout
-    console.log(r.stdout);
-  }
-}
+import { getBinaryPath, isAvailable } from "humaninloop";
 ```
 
-`getBinaryPath()` resolution order: env var `ASKHUMAN_BINARY` (legacy `HUMANINLOOP_BINARY` still works) → platform subpackage → system `PATH`.
+Resolution prefers `HUMANINLOOP_BINARY`, the matching `@humaninloop/*`
+platform package, and `human-in-loop` on `PATH`. The older
+`ASKHUMAN_BINARY` variable and `AskHuman` executable name are checked only as
+compatibility fallbacks.
 
-## Exit code contract
+The wrapper contains no channel credentials. Apple Messages still requires
+the external `imsg` CLI on macOS and always selects iMessage with SMS fallback
+disabled.
 
-| Exit code | Meaning |
-|---|---|
-| `0` | Got a result, or the user cancelled (emits `[Status]`) |
-| `3` | No maintained channel is configured — downstream should degrade |
-| `1` | Other error |
-
-stdout contains only the result blocks (`[Selected options]` / `[User input]` / `[Images]` / `[Files]` / `[Status]`); all logs and errors go to stderr.
-
-## Platforms and system dependencies
-
-Supports macOS (arm64/x64) and Linux (x64). Feishu uses its long-connection and interactive-card integration. Apple Messages requires the external `imsg` CLI on macOS and always selects iMessage with SMS fallback disabled.
-
-More info in the project repo: <https://github.com/cigit-zgy/human-in-loop>
+See the project repository for source installation and the current contract:
+<https://github.com/cigit-zgy/human-in-loop>.

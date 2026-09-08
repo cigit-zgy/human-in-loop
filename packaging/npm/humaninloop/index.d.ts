@@ -1,6 +1,6 @@
 /**
- * 返回当前平台的 AskHuman 二进制绝对路径。
- * 解析顺序：环境变量 `ASKHUMAN_BINARY`（兼容旧 `HUMANINLOOP_BINARY`）→ 平台子包 → 系统 `PATH`。
+ * 返回当前平台的 human-in-loop 二进制绝对路径。
+ * 解析顺序：环境变量 `HUMANINLOOP_BINARY`（兼容旧 `ASKHUMAN_BINARY`）→ 平台子包 → 系统 `PATH`。
  * 找不到时返回 `null`。
  */
 export declare function getBinaryPath(): string | null;

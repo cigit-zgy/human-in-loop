@@ -1,9 +1,9 @@
 {
   "name": "@humaninloop/darwin-x64",
-  "version": "0.13.1",
-  "description": "macOS x64 binary for humaninloop (AskHuman). Installed automatically as an optional dependency of `humaninloop`.",
+  "version": "0.1.0",
+  "description": "macOS x64 binary for human-in-loop. Installed automatically as an optional dependency of `humaninloop`.",
   "license": "MIT",
-  "author": "Naituw",
+  "author": "cigit-zgy",
   "homepage": "https://github.com/cigit-zgy/human-in-loop",
   "repository": {
     "type": "git",

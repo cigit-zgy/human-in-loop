@@ -1,8 +1,8 @@
 [package]
 name = "humaninloop"
-version = "0.13.1"
-description = "HumanInLoop - Human-in-the-loop interaction tool (Rust + Tauri)"
-authors = ["Naituw"]
+version = "0.1.0"
+description = "human-in-loop interaction tool (Rust + Tauri)"
+authors = ["cigit-zgy"]
 license = "MIT"
 edition = "2021"
 # 实际下限：代码已使用 1.82+ 才 stable 的 API（如 Option::is_none_or），

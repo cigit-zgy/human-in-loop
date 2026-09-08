@@ -4,9 +4,13 @@ A focused human-in-the-loop bridge for coding agents. The maintained remote deli
 
 The project originated by adapting the open-source architecture of [`Naituw/AskHuman`](https://github.com/Naituw/AskHuman) and reuses [`openclaw/imsg`](https://github.com/openclaw/imsg) as an external macOS transport dependency. AskHuman is not a maintained runtime dependency or product identity. Carrier messaging is deliberately excluded: no SMS, MMS, RCS, paid messaging gateway, or automatic carrier fallback is permitted.
 
-## Current status
+## v0.1.0 release
 
-The core release-candidate path has been qualified on macOS with a real distinct-account Apple Messages round trip:
+`v0.1.0` is the first independent public release of human-in-loop. It is a
+**source release**: build and install from this repository. It does not claim a
+notarized downloadable macOS installer or general binary distribution.
+
+The production macOS path has been qualified with a real distinct-account Apple Messages round trip:
 
 ```text
 Codex / MCP
@@ -21,7 +25,8 @@ Codex / MCP
 
 The current accepted design lives under [`design/`](design/README.md); historical reasoning under `reports/concept/` never overrides it.
 
-The project is in **release-finalization**: the functional architecture is proven, while public onboarding/packaging, reboot/recovery qualification, default-branch integration, and final release tagging remain explicit release work.
+Normal terminal task completion attempts one compact `notify_human` delivery.
+Periodic or progress notifications are not part of `v0.1.0`.
 
 ## Production Apple Messages topology
 
@@ -114,6 +119,8 @@ notify_human
 `ask_human` accepts a compact question plus 2–6 choices with stable semantic IDs. Repository-associated requests supply `repository_path`; the server resolves the canonical GitHub repository slug locally. The result returns canonical `request_id`, `selected_choice_id`, and `source_channel_id`, not the phone's numeric option.
 
 `notify_human` sends compact task/status information without creating a pending decision or waiting for acknowledgement.
+It is the default terminal-task reporting behavior; it is not a periodic or
+progress-notification mechanism in `v0.1.0`.
 
 Recipient identity, channel credentials, Apple credentials, raw transport commands, generic file operations, and private Messages data are not MCP inputs. Configuration remains local. The interface exposes no public unauthenticated HTTP endpoint and does not use GitHub as a runtime message relay.
 

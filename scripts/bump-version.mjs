@@ -8,7 +8,7 @@
 //   - package.json                    (前端包 version)
 //   - packaging/npm/humaninloop/package.json  (version + optionalDependencies 锁定)
 //   - packaging/npm/platforms/*/package.json  (各平台子包 version)
-// 注: AskHuman --version 文案取自 Cargo.toml 的 CARGO_PKG_VERSION，无需单独处理。
+// 注: human-in-loop --version 文案取自 Cargo.toml 的 CARGO_PKG_VERSION，无需单独处理。
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
