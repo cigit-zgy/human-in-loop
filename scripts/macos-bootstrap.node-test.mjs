@@ -25,6 +25,7 @@ test("bounded bootstrap has one sudo authentication and a fixed operation set", 
   const bootstrap = await read("scripts/macos-bootstrap.sh");
 
   assert.match(bootstrap, /sudo -v/);
+  assert.equal(bootstrap.match(/sudo -v/g)?.length, 1);
   assert.doesNotMatch(bootstrap, /sudo -(i|s)/);
   assert.doesNotMatch(bootstrap, /eval /);
   assert.doesNotMatch(bootstrap, /sh -c/);
@@ -34,7 +35,7 @@ test("bounded bootstrap has one sudo authentication and a fixed operation set", 
   assert.match(bootstrap, /HUMAN_IN_LOOP_ALLOW_IDENTITY_MIGRATION=1/);
   assert.match(bootstrap, /security import/);
   assert.match(bootstrap, /extendedKeyUsage=codeSigning/);
-  assert.match(bootstrap, /launchctl kickstart -k/);
+  assert.match(bootstrap, /imessage-worker install/);
 });
 
 test("an already prepared shared runtime updates without administrator authentication", async () => {
@@ -44,7 +45,10 @@ test("an already prepared shared runtime updates without administrator authentic
   assert.match(bootstrap, /ROUTINE_UPDATE_WITHOUT_SUDO/);
   assert.match(bootstrap, /if shared_runtime_is_prepared; then/);
   assert.match(bootstrap, /\/usr\/bin\/install -m 0755[\s\S]*\$SHARED_BINARY\.next/);
-  assert.match(bootstrap, /\/bin\/launchctl kickstart -k/);
+  assert.match(bootstrap, /\/usr\/bin\/who/);
+  assert.doesNotMatch(bootstrap, /launchctl print "gui\/\$BOT_UID"/);
+  assert.match(bootstrap, /imessage-worker restart/);
+  assert.doesNotMatch(bootstrap, /launchctl kickstart -k/);
 });
 
 test("Bot worker launch metadata never receives a repository path", async () => {

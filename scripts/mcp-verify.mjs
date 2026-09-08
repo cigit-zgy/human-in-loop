@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Actual stdio MCP client → installed binary → production daemon/coordinator → synthetic imsg.
-// Usage: node scripts/mcp-verify.mjs /absolute/path/to/installed/human-in-loop /absolute/task/scratch
+// Usage: node scripts/mcp-verify.mjs /absolute/path/to/installed/human-in-loop /absolute/empty/task/scratch
 // No test path can reach the real imsg executable or the user's channel configuration.
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
@@ -16,7 +16,8 @@ assert(path.isAbsolute(process.argv[2]) && path.isAbsolute(process.argv[3]), 'Us
 const binary = fs.realpathSync(process.argv[2]);
 const scratch = process.argv[3];
 fs.mkdirSync(scratch, { recursive: true });
-const root = fs.mkdtempSync(path.join(scratch, 'p-'));
+assert.equal(fs.readdirSync(scratch).length, 0, 'Task scratch must be empty');
+const root = scratch;
 const configDir = path.join(root, 'c');
 const binDir = path.join(root, 'bin');
 const tempDir = path.join(root, 'temp');

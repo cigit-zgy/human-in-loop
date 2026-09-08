@@ -52,12 +52,37 @@ The product is designed for users who may be away from the Mac when an Agent nee
 
 Expected onboarding:
 
-1. Create a dedicated standard macOS Bot user (the documented default name is `human-in-loop`).
-2. Log into that user and sign Messages.app into a separate Bot Apple Account.
-3. Return to the primary user and run the documented human-in-loop bootstrap/setup flow.
-4. Grant the final stable runtime the required macOS privacy permissions once when prompted.
-5. Complete one real notification/reply qualification.
-6. Reach `SETUP_COMPLETE`.
+Prerequisites are macOS, Rust/Cargo, Node.js with pnpm, and the external pinned
+`openclaw/imsg` 0.15.1 executable plus its companion
+`PhoneNumberKit_PhoneNumberKit.bundle` on `PATH`.
+
+1. Create a dedicated standard macOS Bot user named `human-in-loop`.
+2. Log into that user once and sign Messages.app into a separate Bot Apple Account.
+   Complete Apple Account credentials and 2FA only in Apple's UI, then leave that
+   graphical session logged in.
+3. Return to the primary user, open a terminal at this repository root, and run:
+
+   ```sh
+   ./scripts/macos-bootstrap.sh
+   ```
+
+4. Enter only the non-secret Bot sender and personal recipient iMessage handles
+   when the script requests them. On an unprepared host, authenticate the one
+   bounded administrator bootstrap once.
+5. If the command reports `SETUP_NEEDS_TCC_CONSENT`, grant Full Disk Access and
+   Automation → Messages to the final stable Bot worker in the Bot graphical
+   session, then rerun the same command.
+6. When prompted for the one initial qualification, lock the personal iPhone or
+   keep Messages out of the foreground, continue, and reply from the phone using
+   the generated token and option number.
+7. The readiness table reports `Setup COMPLETE` only after the live runtime,
+   iMessage-only route, notification presentation, and correlated reply all pass.
+
+The setup command never accepts an Apple Account password or 2FA code. Sender and
+recipient handles remain in owner-only local configuration and are not written to
+repository artifacts. Re-running the same command after `Setup COMPLETE` performs
+a stable-signed routine update and live health check without sudo, TCC prompts, or
+another qualification message unless the qualified identity/route has changed.
 
 After `SETUP_COMPLETE`, ordinary Codex/MCP/channel operation is expected to require:
 

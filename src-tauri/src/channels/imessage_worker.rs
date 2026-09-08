@@ -135,9 +135,24 @@ fn worker_runtime_path() -> String {
     )
 }
 
-fn parse_install_args(args: &[String]) -> Result<String, String> {
-    if args.len() != 2 || args[0] != "--coordinator-user" {
-        return Err("usage: imessage-worker install --coordinator-user <short-name>".into());
+struct InstallArgs {
+    coordinator: String,
+    config_stdin: bool,
+    defer_start: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct InstallInput {
+    bot_sender: String,
+    recipient: String,
+}
+
+fn parse_install_args(args: &[String]) -> Result<InstallArgs, String> {
+    if args.len() < 2 || args[0] != "--coordinator-user" {
+        return Err(
+            "usage: imessage-worker install --coordinator-user <short-name> [--config-stdin] [--defer-start]".into(),
+        );
     }
     let username = args[1].trim();
     if username.is_empty()
@@ -148,7 +163,59 @@ fn parse_install_args(args: &[String]) -> Result<String, String> {
     {
         return Err("coordinator user short name is invalid".into());
     }
-    Ok(username.to_string())
+    let mut config_stdin = false;
+    let mut defer_start = false;
+    for flag in &args[2..] {
+        match flag.as_str() {
+            "--config-stdin" if !config_stdin => config_stdin = true,
+            "--defer-start" if !defer_start => defer_start = true,
+            _ => return Err("worker installation option is invalid".into()),
+        }
+    }
+    Ok(InstallArgs {
+        coordinator: username.to_string(),
+        config_stdin,
+        defer_start,
+    })
+}
+
+fn parse_install_input(bytes: &[u8]) -> Result<InstallInput, String> {
+    if bytes.len() > 4096 {
+        return Err("private worker configuration is oversized".into());
+    }
+    serde_json::from_slice(bytes).map_err(|_| "private worker configuration is invalid".into())
+}
+
+fn install_input(config_stdin: bool) -> Result<InstallInput, String> {
+    if config_stdin {
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        std::io::stdin()
+            .take(4097)
+            .read_to_end(&mut bytes)
+            .map_err(|_| "cannot read private worker configuration")?;
+        return parse_install_input(&bytes);
+    }
+    match (std::env::var(BOT_SENDER_ENV), std::env::var(RECIPIENT_ENV)) {
+        (Ok(bot_sender), Ok(recipient)) => Ok(InstallInput {
+            bot_sender,
+            recipient,
+        }),
+        (Err(_), Err(_)) => {
+            let worker = load_worker_config(&worker_config_path())?;
+            let recipient = crate::config::AppConfig::load_without_secrets()
+                .channels
+                .imessage
+                .recipient;
+            Ok(InstallInput {
+                bot_sender: worker.bot_sender,
+                recipient,
+            })
+        }
+        _ => Err(format!(
+            "{BOT_SENDER_ENV} and {RECIPIENT_ENV} must be supplied together"
+        )),
+    }
 }
 
 fn parse_uid(stdout: &[u8]) -> Result<u32, String> {
@@ -214,6 +281,9 @@ pub enum WorkerRequest {
         recipient: String,
         prompt: bool,
     },
+    Restart {
+        recipient: String,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -229,6 +299,7 @@ pub enum WorkerResponse {
     Answer { choice_index: usize },
     Sent,
     Automation { state: String },
+    Restarting,
     Error { state: String },
 }
 
@@ -256,7 +327,8 @@ fn request_recipient(request: &WorkerRequest) -> &str {
         WorkerRequest::Health { recipient }
         | WorkerRequest::Confirm { recipient, .. }
         | WorkerRequest::Notify { recipient, .. }
-        | WorkerRequest::Automation { recipient, .. } => recipient,
+        | WorkerRequest::Automation { recipient, .. }
+        | WorkerRequest::Restart { recipient } => recipient,
     }
 }
 
@@ -289,7 +361,9 @@ fn validate_request(
     }
 
     match request {
-        WorkerRequest::Health { .. } | WorkerRequest::Automation { .. } => Ok(()),
+        WorkerRequest::Health { .. }
+        | WorkerRequest::Automation { .. }
+        | WorkerRequest::Restart { .. } => Ok(()),
         WorkerRequest::Notify { text, .. } => {
             if text.is_empty() || text.chars().count() > super::imessage::MAX_RENDERED_CHARS {
                 Err(HealthState::MessagesUnavailable)
@@ -665,6 +739,29 @@ pub async fn notify(
     }
 }
 
+#[cfg(target_os = "macos")]
+async fn restart(config: &crate::config::IMessageChannelConfig) -> Result<(), String> {
+    let mut client = WorkerClient::connect()
+        .await
+        .map_err(|state| state.as_str().to_string())?;
+    client
+        .send(&WorkerRequest::Restart {
+            recipient: config.recipient.clone(),
+        })
+        .await?;
+    match client.next().await? {
+        WorkerResponse::Restarting => {
+            match tokio::time::timeout(std::time::Duration::from_secs(5), client.next()).await {
+                Ok(Err(_)) => Ok(()),
+                Ok(Ok(_)) => Err("Bot worker sent data after restart acknowledgement".into()),
+                Err(_) => Err("Bot worker did not disconnect for restart".into()),
+            }
+        }
+        WorkerResponse::Error { state } => Err(state),
+        _ => Err("Bot worker returned an invalid restart response".into()),
+    }
+}
+
 #[cfg(not(target_os = "macos"))]
 pub async fn notify(
     _config: &crate::config::IMessageChannelConfig,
@@ -798,6 +895,15 @@ async fn handle_connection(
                 },
             )
             .await;
+        }
+        WorkerRequest::Restart { .. } => {
+            if write_frame(&mut write, &WorkerResponse::Restarting)
+                .await
+                .is_ok()
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                std::process::exit(0);
+            }
         }
         WorkerRequest::Notify { text, .. } => {
             let outcome = tokio::select! {
@@ -938,7 +1044,7 @@ fn secure_worker_socket(path: &Path, coordinator_gid: u32) -> Result<(), String>
 fn install(args: &[String]) -> Result<String, String> {
     use std::os::unix::fs::PermissionsExt;
 
-    let coordinator = parse_install_args(args)?;
+    let parsed = parse_install_args(args)?;
     let bot_uid = lookup_uid("human-in-loop")?;
     if unsafe { libc::geteuid() } != bot_uid {
         return Err("run worker installation while logged in as macOS user human-in-loop".into());
@@ -958,20 +1064,17 @@ fn install(args: &[String]) -> Result<String, String> {
         return Err("shared imsg version is incompatible".into());
     }
 
-    let sender = std::env::var(BOT_SENDER_ENV)
-        .map_err(|_| format!("{BOT_SENDER_ENV} must be supplied privately"))?;
-    let recipient = std::env::var(RECIPIENT_ENV)
-        .map_err(|_| format!("{RECIPIENT_ENV} must be supplied privately"))?;
+    let input = install_input(parsed.config_stdin)?;
     let worker = WorkerConfig::new(
-        lookup_uid(&coordinator)?,
-        lookup_gid(&coordinator)?,
-        &sender,
-        &recipient,
+        lookup_uid(&parsed.coordinator)?,
+        lookup_gid(&parsed.coordinator)?,
+        &input.bot_sender,
+        &input.recipient,
     )?;
 
     let mut app = crate::config::AppConfig::load_without_secrets();
     app.channels.imessage.enabled = true;
-    app.channels.imessage.recipient = recipient;
+    app.channels.imessage.recipient = input.recipient;
     app.channels.imessage.identity_mode = crate::config::IMessageIdentityMode::DistinctPeer;
     app.channels.imessage.chat_id = None;
     app.channels.imessage.chat_guid.clear();
@@ -992,6 +1095,10 @@ fn install(args: &[String]) -> Result<String, String> {
         .map_err(|_| "cannot write Bot worker LaunchAgent")?;
     std::fs::set_permissions(&plist_path, std::fs::Permissions::from_mode(0o644))
         .map_err(|_| "cannot secure Bot worker LaunchAgent")?;
+
+    if parsed.defer_start {
+        return Ok("Bot iMessage worker prepared".into());
+    }
 
     let domain = format!("gui/{bot_uid}");
     let service = format!("{domain}/{WORKER_LABEL}");
@@ -1023,6 +1130,11 @@ pub fn dispatch(args: &[String]) -> Result<String, String> {
             let state = crate::cli::cfgio::block_on(health(&config.channels.imessage));
             Ok(state.as_str().to_string())
         }
+        Some("restart") if args.len() == 1 => {
+            let config = crate::config::AppConfig::load_without_secrets();
+            crate::cli::cfgio::block_on(restart(&config.channels.imessage))?;
+            Ok("worker_restarting".into())
+        }
         Some("automation") if args.len() == 2 && matches!(args[1].as_str(), "status" | "request") => {
             let config = crate::config::AppConfig::load_without_secrets();
             let state = crate::cli::cfgio::block_on(automation(
@@ -1032,7 +1144,7 @@ pub fn dispatch(args: &[String]) -> Result<String, String> {
             Ok(state.as_str().to_string())
         }
         _ => Err(
-            "usage: imessage-worker <install --coordinator-user <short-name>|run|status|automation <status|request>>".into(),
+            "usage: imessage-worker <install --coordinator-user <short-name> [--config-stdin] [--defer-start]|run|status|restart|automation <status|request>>".into(),
         ),
     }
 }
@@ -1139,6 +1251,15 @@ mod tests {
         ));
         assert!(serde_json::from_str::<WorkerRequest>(
             r#"{"operation":"automation","recipient":"person@example.com","prompt":false,"command":"send"}"#
+        )
+        .is_err());
+
+        let restart: WorkerRequest =
+            serde_json::from_str(r#"{"operation":"restart","recipient":"person@example.com"}"#)
+                .unwrap();
+        assert!(matches!(restart, WorkerRequest::Restart { .. }));
+        assert!(serde_json::from_str::<WorkerRequest>(
+            r#"{"operation":"restart","recipient":"person@example.com","command":"exec"}"#
         )
         .is_err());
     }
@@ -1334,16 +1455,48 @@ mod tests {
     }
 
     #[test]
-    fn install_cli_accepts_only_the_coordinator_username() {
-        assert_eq!(
-            parse_install_args(&["--coordinator-user".into(), "wenv".into()]).unwrap(),
-            "wenv"
-        );
+    fn install_cli_accepts_private_stdin_without_identity_arguments() {
+        let parsed = parse_install_args(&[
+            "--coordinator-user".into(),
+            "primary-user".into(),
+            "--config-stdin".into(),
+            "--defer-start".into(),
+        ])
+        .unwrap();
+        assert_eq!(parsed.coordinator, "primary-user");
+        assert!(parsed.config_stdin);
+        assert!(parsed.defer_start);
         assert!(parse_install_args(&["--recipient".into(), "private@example.com".into()]).is_err());
-        assert!(parse_install_args(&["--coordinator-user".into(), "../wenv".into()]).is_err());
+        assert!(parse_install_args(&[
+            "--coordinator-user".into(),
+            "../primary-user".into(),
+            "--config-stdin".into(),
+        ])
+        .is_err());
+        assert!(parse_install_args(&[
+            "--coordinator-user".into(),
+            "primary-user".into(),
+            "--config-stdin".into(),
+            "private-handle".into(),
+        ])
+        .is_err());
         assert_eq!(parse_uid(b"501\n").unwrap(), 501);
         assert!(parse_uid(b"0\n").is_err());
         assert!(parse_uid(b"501 extra\n").is_err());
+    }
+
+    #[test]
+    fn private_install_input_is_closed_and_validated() {
+        let input = parse_install_input(
+            br#"{"botSender":"bot@example.invalid","recipient":"person@example.invalid"}"#,
+        )
+        .unwrap();
+        assert_eq!(input.bot_sender, "bot@example.invalid");
+        assert_eq!(input.recipient, "person@example.invalid");
+        assert!(parse_install_input(
+            br#"{"botSender":"bot@example.invalid","recipient":"person@example.invalid","password":"forbidden"}"#,
+        )
+        .is_err());
     }
 
     #[test]
