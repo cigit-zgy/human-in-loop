@@ -5,7 +5,7 @@ pub fn dispatch(args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
         Some("prepare") if args.len() == 1 => prepare(),
         _ => {
-            eprintln!("Usage: AskHuman update prepare");
+            eprintln!("Usage: human-in-loop update prepare");
             1
         }
     }
@@ -19,7 +19,7 @@ fn prepare() -> i32 {
     {
         Ok(runtime) => runtime,
         Err(error) => {
-            eprintln!("AskHuman update prepare: failed to create runtime: {error}");
+            eprintln!("human-in-loop update prepare: failed to create runtime: {error}");
             return 1;
         }
     };
@@ -30,10 +30,10 @@ fn prepare() -> i32 {
 
         if crate::client::request_status().await.is_some() {
             if !crate::client::request_stop(false).await {
-                eprintln!("AskHuman update prepare: failed to request a graceful daemon stop");
+                eprintln!("human-in-loop update prepare: failed to request a graceful daemon stop");
                 return 1;
             }
-            eprintln!("AskHuman update prepare: waiting for the daemon to drain…");
+            eprintln!("human-in-loop update prepare: waiting for the daemon to drain…");
             let mut last_progress = Instant::now() - Duration::from_secs(30);
             loop {
                 let Some(status) = crate::client::request_status().await else {
@@ -41,7 +41,7 @@ fn prepare() -> i32 {
                 };
                 if last_progress.elapsed() >= Duration::from_secs(30) {
                     eprintln!(
-                        "AskHuman update prepare: {} active request(s) remaining…",
+                        "human-in-loop update prepare: {} active request(s) remaining…",
                         status.active_requests
                     );
                     last_progress = Instant::now();
@@ -64,7 +64,7 @@ fn prepare() -> i32 {
             }
             if Instant::now() >= deadline {
                 eprintln!(
-                    "AskHuman update prepare: timed out closing the GUI Host at {}",
+                    "human-in-loop update prepare: timed out closing the GUI Host at {}",
                     crate::ipc::transport::endpoint_path("gui-host").display()
                 );
                 return 1;
@@ -77,11 +77,13 @@ fn prepare() -> i32 {
         // A concurrent caller could have started the daemon while the Host was closing. Never
         // report readiness while a process that may lock the installed executable is reachable.
         if crate::client::request_status().await.is_some() {
-            eprintln!("AskHuman update prepare: the daemon restarted during preparation; retry");
+            eprintln!(
+                "human-in-loop update prepare: the daemon restarted during preparation; retry"
+            );
             return 1;
         }
 
-        println!("AskHuman update prepare: ready");
+        println!("human-in-loop update prepare: ready");
         match kind {
             crate::update::InstallKind::Npm => {
                 println!("next: {}", crate::update::npm::NpmUpdater::manual_command());
@@ -104,7 +106,7 @@ fn prepare() -> i32 {
 
 #[cfg(not(windows))]
 fn prepare() -> i32 {
-    eprintln!("AskHuman update prepare is only required on Windows");
+    eprintln!("human-in-loop update prepare is only required on Windows");
     1
 }
 

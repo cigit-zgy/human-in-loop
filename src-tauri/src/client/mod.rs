@@ -234,11 +234,11 @@ async fn wait_for_drain() {
         if last_hint.is_none_or(|t| t.elapsed() >= Duration::from_secs(30)) {
             match request_status().await {
                 Some(info) => eprintln!(
-                    "askhuman: daemon is draining ({} active request(s) left); waiting to submit… (run 'AskHuman daemon restart --force' to switch now, interrupting them)",
+                    "human-in-loop: daemon is draining ({} active request(s) left); waiting to submit… (run 'human-in-loop daemon restart --force' to switch now, interrupting them)",
                     info.active_requests
                 ),
                 None => eprintln!(
-                    "askhuman: daemon is draining; waiting to submit… (run 'AskHuman daemon restart --force' to switch now)"
+                    "human-in-loop: daemon is draining; waiting to submit… (run 'human-in-loop daemon restart --force' to switch now)"
                 ),
             }
             last_hint = Some(Instant::now());
@@ -755,7 +755,7 @@ async fn run_ask_final_async(task: crate::ipc::TaskRequest, verbose: bool) -> As
                     continue 'outer;
                 }
                 Err(_) => {
-                    return client_error(verbose, "askhuman: failed to start daemon");
+                    return client_error(verbose, "human-in-loop: failed to start daemon");
                 }
             }
             let Ok((mut reader, mut writer)) = connect_split().await else {
@@ -809,12 +809,12 @@ async fn run_ask_final_async(task: crate::ipc::TaskRequest, verbose: bool) -> As
                     }
                     Ok(Some(_)) => {}
                     Ok(None) | Err(_) => {
-                        return client_error(verbose, "askhuman: daemon connection lost");
+                        return client_error(verbose, "human-in-loop: daemon connection lost");
                     }
                 }
             }
         }
-        return client_error(verbose, "askhuman: could not reach daemon");
+        return client_error(verbose, "human-in-loop: could not reach daemon");
     }
 }
 

@@ -1,4 +1,4 @@
-//! 隐藏调试子命令组 `AskHuman debug …`（不进 help；PoC 后保留作回归工具）。
+//! 隐藏调试子命令组 `human-in-loop debug …`（不进 help；PoC 后保留作回归工具）。
 //!
 //! `dd-watch-poc`：钉钉 watch 卡高频更新探针（`docs/plans/im-watch-channels.md` §4）。
 //! 建卡投放后循环就地更新模板变量，逐次记录 OpenAPI 耗时与错误；同时自连一条 Stream
@@ -14,7 +14,7 @@ pub fn dispatch(args: &[String], _lang: Lang) {
         Some("dd-watch-poc") => dd_watch_poc(&args[1..]),
         _ => {
             eprintln!(
-                "usage: AskHuman debug dd-watch-poc [--count N] [--interval-ms MS] [--template ID]\n       --count 0 = 只发一张卡看样式（不更新、不定格、不连 Stream）"
+                "usage: human-in-loop debug dd-watch-poc [--count N] [--interval-ms MS] [--template ID]\n       --count 0 = 只发一张卡看样式（不更新、不定格、不连 Stream）"
             );
             exit(1);
         }

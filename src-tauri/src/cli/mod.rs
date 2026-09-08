@@ -727,7 +727,7 @@ fn show_last_cli_scope(
         }),
         (None, None) => Ok(crate::show_last::Scope::Project(project)),
         _ => Err(
-            "AskHuman detected an Agent caller but no trustworthy session id; refusing an unsafe project-wide fallback",
+            "human-in-loop detected an Agent caller but no trustworthy session id; refusing an unsafe project-wide fallback",
         ),
     }
 }

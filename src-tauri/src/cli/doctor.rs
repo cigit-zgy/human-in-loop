@@ -1,4 +1,4 @@
-//! `AskHuman doctor [--json]` —— 一屏体检：daemon / 渠道 / agent 集成 健康状态。
+//! `human-in-loop doctor [--json]` —— 一屏体检：daemon / 渠道 / agent 集成 健康状态。
 //! 复用 `client::request_status`、`channel_cmd` 的判定、`integrations::*` 的状态查询。
 
 use super::cfgio;
@@ -26,8 +26,8 @@ pub fn dispatch(args: &[String], lang: Lang) {
     {
         super::print_line(&cfgio::t(
             lang,
-            "AskHuman doctor [--json] — one-screen health check (daemon, channels, integrations)",
-            "AskHuman doctor [--json] —— 一屏体检（daemon、渠道、集成）",
+            "human-in-loop doctor [--json] — one-screen health check (daemon, channels, integrations)",
+            "human-in-loop doctor [--json] —— 一屏体检（daemon、渠道、集成）",
         ));
         return;
     }

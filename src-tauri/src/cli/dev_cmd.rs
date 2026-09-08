@@ -1,4 +1,4 @@
-//! `AskHuman dev <enable|disable|status|preset …>` — Dev Instance management.
+//! `human-in-loop dev <enable|disable|status|preset …>` — Dev Instance management.
 //!
 //! See `docs/specs/dev-instance-parallel.md`.
 
@@ -34,14 +34,14 @@ pub fn dispatch(args: &[String], _lang: Lang) {
 fn print_usage() {
     eprintln!(
         "Usage:
-  AskHuman dev enable [--preset <name>]... [--force]
-  AskHuman dev disable [--purge]
-  AskHuman dev status
-  AskHuman dev preset save <name> [--from-instance]
-  AskHuman dev preset list
-  AskHuman dev preset show <name>
-  AskHuman dev preset release <name>
-  AskHuman dev preset rm <name> [--force]
+  human-in-loop dev enable [--preset <name>]... [--force]
+  human-in-loop dev disable [--purge]
+  human-in-loop dev status
+  human-in-loop dev preset save <name> [--from-instance]
+  human-in-loop dev preset list
+  human-in-loop dev preset show <name>
+  human-in-loop dev preset release <name>
+  human-in-loop dev preset rm <name> [--force]
 
 Dev Instance isolates daemon/bin/config per git worktree.
 See docs/specs/dev-instance-parallel.md and docs/agent-worktree-setup.md."
@@ -169,15 +169,15 @@ fn cmd_enable(args: &[String]) {
     }
     if !bin
         .join(if cfg!(windows) {
-            "AskHuman.exe"
+            "human-in-loop.exe"
         } else {
-            "AskHuman"
+            "human-in-loop"
         })
         .is_file()
     {
         println!("  next       run ./scripts/install.sh  (installs into this instance bin)");
     } else {
-        println!("  next       AskHuman … / MCP ask  (auto-routed to this instance)");
+        println!("  next       human-in-loop … / MCP ask  (auto-routed to this instance)");
     }
     exit(0);
 }
@@ -360,7 +360,7 @@ fn cmd_status() {
     match root {
         None => {
             println!("dev instance: not enabled for cwd {}", cwd.display());
-            println!("  tip: AskHuman dev enable");
+            println!("  tip: human-in-loop dev enable");
             exit(0);
         }
         Some(root) => {
@@ -507,7 +507,7 @@ fn preset_save(args: &[String]) {
         eprintln!(
             "error: only --from-instance is supported for now (configure channels in this worktree first)"
         );
-        eprintln!("  AskHuman dev enable && AskHuman --settings && AskHuman dev preset save {name} --from-instance");
+        eprintln!("  human-in-loop dev enable && human-in-loop --settings && human-in-loop dev preset save {name} --from-instance");
         exit(1);
     }
 

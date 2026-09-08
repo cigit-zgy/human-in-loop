@@ -1,4 +1,4 @@
-//! `AskHuman agents <monitor|show|install|uninstall|update|help>` —— Agent 实时状态 + 集成。
+//! `human-in-loop agents <monitor|show|install|uninstall|update|help>` —— Agent 实时状态 + 集成。
 //! 解决与原 `agents status`（GUI 窗口）命名冲突：状态窗口改名 `monitor`（增文本 / `--json`），
 //! 集成动词 install/uninstall/update/show 复用 `integrations::{agent_rules,cursor_hook,claude_hook,agent_lifecycle}`。
 
@@ -306,8 +306,8 @@ fn permission_cmd(args: &[String], lang: Lang) -> Result<(), String> {
         agent_permission::set_enabled(target, enabled).map_err(|e| e.to_string())?;
         print_line(&cfgio::t(
             lang,
-            "This changes future permission prompts only; approvals already delivered by AskHuman remain valid.",
-            "此设置只影响后续权限请求；AskHuman 已投递的在途审批仍然有效。",
+            "This changes future permission prompts only; approvals already delivered by human-in-loop remain valid.",
+            "此设置只影响后续权限请求；human-in-loop 已投递的在途审批仍然有效。",
         ));
     }
     let status = agent_permission::status(target);
@@ -426,8 +426,8 @@ fn cleanup_cmd(args: &[String], lang: Lang) -> Result<(), String> {
     if errors.is_empty() {
         print_line(&cfgio::t(
             lang,
-            "Removed all AskHuman-managed Agent integrations.",
-            "已移除全部由 AskHuman 托管的 Agent 集成。",
+            "Removed all human-in-loop-managed Agent integrations.",
+            "已移除全部由 human-in-loop 托管的 Agent 集成。",
         ));
         Ok(())
     } else {
@@ -647,7 +647,7 @@ fn hook_state(installed: bool, needs_update: bool, yes: &str, no: &str, upd: &st
 fn help(lang: Lang) -> String {
     cfgio::t(
         lang,
-        "AskHuman agents — agent status + integrations (cursor | claude | codex | grok | pi)\n\
+        "human-in-loop agents — agent status + integrations (cursor | claude | codex | grok | pi)\n\
 \n\
   agents monitor [--json|--text]     Live agent status (opens a window when a GUI is available)\n\
   agents mode <agent> [none|cli|mcp] Switch the integration mode (omit to query); auto-swaps products\n\
@@ -655,14 +655,14 @@ fn help(lang: Lang) -> String {
   agents permission <claude|codex> [on|off]  Query or set permission approval\n\
   agents stop <claude|codex|cursor|pi> [on|off]  Query or set Stop confirmation\n\
   agents lifecycle <agent> [on|off]  Query or set lifecycle tracking inside an active integration\n\
-  agents cleanup                     Remove every AskHuman-managed Agent artifact\n\
+  agents cleanup                     Remove every human-in-loop-managed Agent artifact\n\
   agents show [<agent>]              Manual-integration prompt + paste paths + install status\n\
 \n\
   Modes: cli = rules + runtime + default-on lifecycle; mcp = rules/skill + MCP + default-on lifecycle; none = remove.\n\
   Grok only supports none | mcp (skill + MCP config); it has no CLI mode and no timeout hook.\n\
   Pi only supports none | cli; its runtime artifact is a managed Extension and Stop defaults on.\n\
   Legacy install/uninstall and per-artifact write flags have been removed.",
-        "AskHuman agents —— agent 状态 + 集成（cursor | claude | codex | grok | pi）\n\
+        "human-in-loop agents —— agent 状态 + 集成（cursor | claude | codex | grok | pi）\n\
 \n\
   agents monitor [--json|--text]     实时 agent 状态（有 GUI 时开窗）\n\
   agents mode <agent> [none|cli|mcp] 切换集成模式（省略则查询）；自动切换底层产物\n\
@@ -670,7 +670,7 @@ fn help(lang: Lang) -> String {
   agents permission <claude|codex> [on|off]  查询或设置权限审批\n\
   agents stop <claude|codex|cursor|pi> [on|off]  查询或设置结束确认\n\
   agents lifecycle <agent> [on|off]  查询或设置已启用集成内的生命周期追踪\n\
-  agents cleanup                     移除全部由 AskHuman 托管的 Agent 产物\n\
+  agents cleanup                     移除全部由 human-in-loop 托管的 Agent 产物\n\
   agents show [<agent>]              手动集成提示词 + 粘贴位置 + 安装状态\n\
 \n\
   模式: cli = 规则 + runtime + 默认开启的生命周期；mcp = 规则/skill + MCP + 默认开启的生命周期；none = 移除。\n\

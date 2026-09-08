@@ -1,4 +1,4 @@
-//! `AskHuman channel` configuration for the two maintained remote delivery channels.
+//! `human-in-loop channel` configuration for the two maintained remote delivery channels.
 
 use super::cfgio::{self, SecretSource};
 use crate::config::{AppConfig, IMessageIdentityMode};
@@ -341,8 +341,8 @@ fn yes_no_word(value: bool, lang: Lang) -> String {
 fn help(lang: Lang) -> String {
     cfgio::t(
         lang,
-        "AskHuman channel — maintained channels: feishu | imessage\n\n  channel list [--json]\n  channel set feishu [--enable|--disable] --app-id <id> --open-id <id> --base-url <url> --app-secret-{env|file|stdin}\n  channel set imessage [--enable|--disable] --recipient <handle> --identity-mode <distinct_peer|same_account> [--chat-id <id> --chat-guid <guid>]\n  channel enable|disable <name>\n  channel test <name>\n  channel detect feishu [--save]\n\nApple Messages always uses explicit iMessage service with SMS fallback disabled.",
-        "AskHuman channel —— 受维护渠道：feishu | imessage\n\n  channel list [--json]\n  channel set feishu [--enable|--disable] --app-id <id> --open-id <id> --base-url <url> --app-secret-{env|file|stdin}\n  channel set imessage [--enable|--disable] --recipient <handle> --identity-mode <distinct_peer|same_account> [--chat-id <id> --chat-guid <guid>]\n  channel enable|disable <渠道>\n  channel test <渠道>\n  channel detect feishu [--save]\n\nApple 信息始终显式使用 iMessage 服务并关闭 SMS 回退。",
+        "human-in-loop channel — maintained channels: feishu | imessage\n\n  channel list [--json]\n  channel set feishu [--enable|--disable] --app-id <id> --open-id <id> --base-url <url> --app-secret-{env|file|stdin}\n  channel set imessage [--enable|--disable] --recipient <handle> --identity-mode <distinct_peer|same_account> [--chat-id <id> --chat-guid <guid>]\n  channel enable|disable <name>\n  channel test <name>\n  channel detect feishu [--save]\n\nApple Messages always uses explicit iMessage service with SMS fallback disabled.",
+        "human-in-loop channel —— 受维护渠道：feishu | imessage\n\n  channel list [--json]\n  channel set feishu [--enable|--disable] --app-id <id> --open-id <id> --base-url <url> --app-secret-{env|file|stdin}\n  channel set imessage [--enable|--disable] --recipient <handle> --identity-mode <distinct_peer|same_account> [--chat-id <id> --chat-guid <guid>]\n  channel enable|disable <渠道>\n  channel test <渠道>\n  channel detect feishu [--save]\n\nApple 信息始终显式使用 iMessage 服务并关闭 SMS 回退。",
     )
 }
 

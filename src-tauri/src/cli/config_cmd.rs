@@ -1,4 +1,4 @@
-//! `AskHuman config <show|get|set|unset|path|help>` —— 通用键值兜底（点号 camelCase 键）。
+//! `human-in-loop config <show|get|set|unset|path|help>` —— 通用键值兜底（点号 camelCase 键）。
 //! 密钥键自动路由进钥匙串，其值只从 stdin/env/file 取、绝不进 argv（见设计 §4 / D5）。
 
 use super::cfgio::{self, SecretSource};
@@ -250,7 +250,7 @@ fn value_to_plain(v: &Value) -> String {
 fn help(lang: Lang) -> String {
     cfgio::t(
         lang,
-        "AskHuman config — generic key/value over ~/.askhuman/config.json (fallback; prefer 'channel' for IM setup)\n\
+        "human-in-loop config — generic key/value over ~/.human-in-loop/config.json (fallback; prefer 'channel' for IM setup)\n\
 \n\
   config show [--json]            Print effective config (secrets shown as ●●●)\n\
   config get <key>                Print one value (dotted camelCase key)\n\
@@ -261,7 +261,7 @@ fn help(lang: Lang) -> String {
 \n\
   Keys: general.* / channels.feishu.* / channels.imessage.* / channels.autoActivation / experimental.enabled\n\
   Secret key: channels.feishu.appSecret",
-        "AskHuman config —— 对 ~/.askhuman/config.json 的通用键值（兜底；渠道配置优先用 'channel'）\n\
+        "human-in-loop config —— 对 ~/.human-in-loop/config.json 的通用键值（兜底；渠道配置优先用 'channel'）\n\
 \n\
   config show [--json]            打印生效配置（密钥显示为 ●●●）\n\
   config get <键>                 打印某个值（点号小驼峰键）\n\

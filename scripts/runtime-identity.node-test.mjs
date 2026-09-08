@@ -9,11 +9,18 @@ async function read(relativePath) {
 }
 
 test("production runtime uses the human-in-loop identity", async () => {
-  const [cargo, tauri, installer, help, paths, daemon, daemonRuntime, daemonRequest, cli, prompts, mcpVerify, readme] = await Promise.all([
+  const [cargo, tauri, installer, help, channelCli, configCli, agentsCli, doctorCli, updateCli, devCli, client, paths, daemon, daemonRuntime, daemonRequest, cli, prompts, mcpVerify, readme] = await Promise.all([
     read("src-tauri/Cargo.toml"),
     read("src-tauri/tauri.conf.json"),
     read("scripts/install.sh"),
     read("src-tauri/src/cli/help.rs"),
+    read("src-tauri/src/cli/channel_cmd.rs"),
+    read("src-tauri/src/cli/config_cmd.rs"),
+    read("src-tauri/src/cli/agents_cmd.rs"),
+    read("src-tauri/src/cli/doctor.rs"),
+    read("src-tauri/src/cli/update_cmd.rs"),
+    read("src-tauri/src/cli/dev_cmd.rs"),
+    read("src-tauri/src/client/mod.rs"),
     read("src-tauri/src/paths.rs"),
     read("src-tauri/src/daemon/spawn.rs"),
     read("src-tauri/src/daemon/runtime/mod.rs"),
@@ -35,6 +42,13 @@ test("production runtime uses the human-in-loop identity", async () => {
 
   assert.match(help, /format!\("human-in-loop v\{\}"/);
   assert.doesNotMatch(help, /AskHuman/);
+  assert.doesNotMatch(channelCli, /AskHuman channel/);
+  for (const source of [configCli, agentsCli, doctorCli, updateCli, client]) {
+    assert.doesNotMatch(source, /AskHuman (config|agents|doctor|update|daemon)/);
+    assert.doesNotMatch(source, /askhuman: daemon/);
+  }
+  assert.doesNotMatch(configCli, /~\/\.askhuman\/config\.json/);
+  assert.doesNotMatch(devCli, /AskHuman dev|"AskHuman(?:\.exe)?"/);
   assert.match(paths, /HUMAN_IN_LOOP_HOME_ENV/);
   assert.match(paths, /home\(\)\.join\("\.human-in-loop"\)/);
   assert.match(daemon, /io\.github\.cigit-zgy\.human-in-loop\.daemon/);
