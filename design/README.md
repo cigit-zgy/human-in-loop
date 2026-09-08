@@ -10,8 +10,8 @@ This directory is the sole current living-design authority. Historical reasoning
 | `03_imessage_channel.md` | `imessage-channel` | Dedicated Bot Apple Account/macOS-user transport through `openclaw/imsg`, session/identity health, strict send/watch behavior, notification qualification, and iMessage-only fail-closed rules |
 | `04_feishu_channel.md` | `feishu-channel` | Feishu card transport retained from AskHuman and aligned with the canonical protocol |
 | `05_mcp_interface.md` | `mcp-interface` | Minimal public MCP `ask_human` blocking decision + `notify_human` non-blocking notification surface |
-| `06_codex_integration.md` | `codex-integration` | Machine-wide Codex activation, checkpoint classification, terminal reporting, and failure semantics |
-| `07_macos_runtime_deployment.md` | `macos-runtime-deployment` | Stable macOS code identity, one-time privileged bootstrap, TCC permission lifecycle, protected-folder behavior, and minimal user switching |
+| `06_codex_integration.md` | `codex-integration` | Machine-wide Codex activation, semantic checkpoint classification, terminal reporting, and consolidated host setup/recovery behavior |
+| `07_macos_runtime_deployment.md` | `macos-runtime-deployment` | Stable macOS code identity, one-time onboarding/bootstrap, TCC lifecycle, `SETUP_COMPLETE`, recovery, protected-folder behavior, and unattended normal operation |
 
 Routine reading: start here, then load only the topic that owns the active concern. Load `00_overview.md` only when whole-system context is needed.
 
