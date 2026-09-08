@@ -16,11 +16,17 @@ const RECIPIENT_ENV: &str = "HUMAN_IN_LOOP_IMESSAGE_RECIPIENT";
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkerConfig {
     coordinator_uid: u32,
+    coordinator_gid: u32,
     bot_sender: String,
 }
 
 impl WorkerConfig {
-    pub fn new(coordinator_uid: u32, bot_sender: &str, recipient: &str) -> Result<Self, String> {
+    pub fn new(
+        coordinator_uid: u32,
+        coordinator_gid: u32,
+        bot_sender: &str,
+        recipient: &str,
+    ) -> Result<Self, String> {
         let bot_sender = bot_sender.trim();
         let recipient = recipient.trim();
         if coordinator_uid == 0 {
@@ -37,6 +43,7 @@ impl WorkerConfig {
         }
         Ok(Self {
             coordinator_uid,
+            coordinator_gid,
             bot_sender: bot_sender.to_string(),
         })
     }
@@ -153,6 +160,17 @@ fn lookup_uid(username: &str) -> Result<u32, String> {
         return Err("macOS user is unavailable".into());
     }
     parse_uid(&output.stdout)
+}
+
+fn lookup_gid(username: &str) -> Result<u32, String> {
+    let output = std::process::Command::new("/usr/bin/id")
+        .args(["-g", username])
+        .output()
+        .map_err(|_| "cannot resolve macOS user group")?;
+    if !output.status.success() {
+        return Err("macOS user group is unavailable".into());
+    }
+    parse_uid(&output.stdout).map_err(|_| "user group id is invalid".into())
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -714,7 +732,7 @@ async fn handle_connection(
 
 #[cfg(target_os = "macos")]
 async fn serve() -> Result<(), String> {
-    use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
 
     let bot_uid = lookup_uid("human-in-loop")?;
     let current_uid = unsafe { libc::geteuid() };
@@ -734,8 +752,7 @@ async fn serve() -> Result<(), String> {
     }
     let listener =
         tokio::net::UnixListener::bind(path).map_err(|_| "cannot bind the Bot worker socket")?;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o660))
-        .map_err(|_| "cannot secure the Bot worker socket")?;
+    secure_worker_socket(path, worker.coordinator_gid)?;
     loop {
         let (stream, _) = listener
             .accept()
@@ -743,6 +760,16 @@ async fn serve() -> Result<(), String> {
             .map_err(|_| "Bot worker accept failed")?;
         tokio::spawn(handle_connection(stream, worker.clone(), channel.clone()));
     }
+}
+
+#[cfg(target_os = "macos")]
+fn secure_worker_socket(path: &Path, coordinator_gid: u32) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::os::unix::fs::chown(path, None, Some(coordinator_gid))
+        .map_err(|_| "cannot assign the Bot worker socket group")?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o660))
+        .map_err(|_| "cannot secure the Bot worker socket".to_string())
 }
 
 #[cfg(target_os = "macos")]
@@ -773,7 +800,12 @@ fn install(args: &[String]) -> Result<String, String> {
         .map_err(|_| format!("{BOT_SENDER_ENV} must be supplied privately"))?;
     let recipient = std::env::var(RECIPIENT_ENV)
         .map_err(|_| format!("{RECIPIENT_ENV} must be supplied privately"))?;
-    let worker = WorkerConfig::new(lookup_uid(&coordinator)?, &sender, &recipient)?;
+    let worker = WorkerConfig::new(
+        lookup_uid(&coordinator)?,
+        lookup_gid(&coordinator)?,
+        &sender,
+        &recipient,
+    )?;
 
     let mut app = crate::config::AppConfig::load_without_secrets();
     app.channels.imessage.enabled = true;
@@ -845,9 +877,24 @@ mod tests {
 
     #[test]
     fn worker_config_requires_distinct_pinned_identities() {
-        assert!(WorkerConfig::new(501, "bot@example.com", "person@example.com").is_ok());
-        assert!(WorkerConfig::new(501, "", "person@example.com").is_err());
-        assert!(WorkerConfig::new(501, "same@example.com", " SAME@example.com ").is_err());
+        assert!(WorkerConfig::new(501, 20, "bot@example.com", "person@example.com").is_ok());
+        assert!(WorkerConfig::new(501, 20, "", "person@example.com").is_err());
+        assert!(WorkerConfig::new(501, 20, "same@example.com", " SAME@example.com ").is_err());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn worker_socket_is_group_accessible_to_the_coordinator() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("worker.sock");
+        let _listener = tokio::net::UnixListener::bind(&path).unwrap();
+        let coordinator_gid = unsafe { libc::getegid() };
+        secure_worker_socket(&path, coordinator_gid).unwrap();
+        let metadata = std::fs::metadata(path).unwrap();
+        assert_eq!(metadata.gid(), coordinator_gid);
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o660);
     }
 
     #[cfg(unix)]
@@ -857,10 +904,11 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("imessage-worker.json");
-        let config = WorkerConfig::new(501, "bot@example.com", "person@example.com").unwrap();
+        let config = WorkerConfig::new(501, 20, "bot@example.com", "person@example.com").unwrap();
         save_worker_config(&path, &config).unwrap();
         let loaded = load_worker_config(&path).unwrap();
         assert_eq!(loaded.coordinator_uid, 501);
+        assert_eq!(loaded.coordinator_gid, 20);
         assert_eq!(
             std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
             0o600
@@ -996,7 +1044,7 @@ mod tests {
 
     #[test]
     fn worker_rejects_unpinned_or_self_addressed_requests_before_transport() {
-        let config = WorkerConfig::new(501, "bot@example.com", "person@example.com").unwrap();
+        let config = WorkerConfig::new(501, 20, "bot@example.com", "person@example.com").unwrap();
         let approved = WorkerRequest::Health {
             recipient: "person@example.com".into(),
         };
@@ -1012,6 +1060,7 @@ mod tests {
 
         let same = WorkerConfig {
             coordinator_uid: 501,
+            coordinator_gid: 20,
             bot_sender: "person@example.com".into(),
         };
         assert_eq!(
@@ -1022,7 +1071,7 @@ mod tests {
 
     #[test]
     fn worker_rejects_malformed_confirm_without_sending() {
-        let config = WorkerConfig::new(501, "bot@example.com", "person@example.com").unwrap();
+        let config = WorkerConfig::new(501, 20, "bot@example.com", "person@example.com").unwrap();
         let mut request = WorkerRequest::Confirm {
             recipient: "person@example.com".into(),
             request_id: "request-1".into(),
