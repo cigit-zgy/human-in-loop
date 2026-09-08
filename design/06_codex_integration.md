@@ -4,9 +4,9 @@ title: Codex machine-wide human-in-the-loop integration
 status: active
 role: design_authority
 summary: >
-  Defines global Codex activation, checkpoint classification, fail-closed decision
-  handling, terminal notification ordering, and the separation between Codex-home
-  AGENTS policy, MCP configuration, project checkpoints, and task checkpoints.
+  Defines global Codex activation, checkpoint classification, fail-closed human
+  decisions, terminal reporting, and the rule that host permission mechanics are
+  consolidated setup/recovery events rather than recurring semantic prompts.
 operational_projection:
   - SKILL.md
   - $CODEX_HOME/AGENTS.md
@@ -15,9 +15,9 @@ operational_projection:
 
 # Purpose
 
-Make `human-in-loop` a dependable machine-wide Codex capability without copying its full protocol into every repository or task.
+Make `human-in-loop` a dependable machine-wide Codex capability without copying its full protocol into every repository/task and without turning macOS permission mechanics into repeated human-approval spam.
 
-The integration has four distinct owners:
+The integration has four policy owners:
 
 ```text
 $CODEX_HOME/AGENTS.md
@@ -33,127 +33,121 @@ reports/chatgpt task
 = task-specific additional checkpoints
 ```
 
-MCP availability is configured separately in `$CODEX_HOME/config.toml`.
-
-# OpenAI harness boundary
-
-Codex aggregates persistent instructions from `$CODEX_HOME/AGENTS.md` and more specific project-scoped AGENTS files. Therefore the machine-wide AGENTS layer is intentionally thin: it activates the maintained Skill and states only invariants that must apply to every Codex task.
-
-The MCP server supplies `ask_human` and `notify_human` tools to the Codex agent loop. MCP tool safety remains owned by `human-in-loop`; the Codex shell sandbox is not a substitute for MCP guardrails.
+MCP registration is owned separately by `$CODEX_HOME/config.toml`. macOS installation/TCC lifecycle is owned by `07_macos_runtime_deployment.md`.
 
 # Global activation contract
 
-The Codex-home AGENTS rule must make the following behavior explicit:
+For every Codex task:
 
 ```text
-for every Codex task
-→ load/obey the maintained human-in-loop Skill
+load/obey the maintained human-in-loop Skill
 
-when the Skill or active project/task declares a mandatory human checkpoint
-→ stop the affected execution path
+mandatory semantic checkpoint
+→ stop affected path
 → call ask_human
-→ do not continue until one valid correlated human result exists
+→ continue only from one correlated canonical human result
 
-at every normal terminal task state
-→ first finish the normal durable task result/report + required repository synchronization
-→ then attempt notify_human
-→ then return the normal final Codex response
+normal terminal task state
+→ complete durable result/report and required Git synchronization
+→ attempt notify_human
+→ return the normal final Codex response
 ```
 
-The Codex-home AGENTS file MUST NOT copy the complete checkpoint classifier, MCP schemas, transport details, iMessage grammar, Feishu details, or implementation manual. Those remain in the Skill/project.
+The Codex-home AGENTS layer stays thin. It does not copy the full classifier, MCP schema, transport details, iMessage grammar, Feishu details, or macOS setup manual.
 
-# Authority and override
+# Checkpoint classifier
 
-Instruction precedence remains the Codex/project authority model. Human-in-loop adds a global safety/decision layer; it does not supersede explicit User instructions.
+`ASK_HUMAN_REQUIRED` is true only when current higher authority has not already resolved/authorized the decision and at least one condition applies:
 
-Project AGENTS and committed tasks may add checkpoints. They do not silently weaken global checkpoints.
+```text
+EXPLICIT_CHECKPOINT
+USER_PREFERENCE_DECISION
+DESTRUCTIVE_OR_IRREVERSIBLE
+EXTERNAL_OR_PUBLIC_SIDE_EFFECT
+AUTHORITY_OR_SCIENTIFIC_CHANGE
+SECURITY_CREDENTIAL_PERMISSION
+```
 
-An explicit User instruction may authorize an action that would otherwise require a checkpoint. Do not ask the User again merely for ceremony when the current authoritative task already contains that explicit authorization.
+Routine reversible engineering work under a clear contract does not qualify.
 
-# Generic checkpoint classifier
+Do not ask again for an action already explicitly authorized by the User/current task unless a materially new decision boundary appears.
 
-`ASK_HUMAN_REQUIRED` is true when at least one of these conditions applies and current higher authority has not already explicitly resolved/authorized the decision:
+# Host permission mechanics are not semantic decisions
 
-## EXPLICIT_CHECKPOINT
+Codex shell/sandbox prompts, administrator authentication, macOS TCC consent, Apple Account login, and Bot-user login are host/deployment mechanics. They are not converted into repeated `ask_human` choices merely because execution needs them.
 
-The User, current project design, project AGENTS, or committed task explicitly requires a human choice/confirmation.
+Their behavior is:
 
-## USER_PREFERENCE_DECISION
+```text
+initial onboarding / explicit recovery
+→ owning deployment state reports one consolidated actionable USER_CHECKPOINT
+→ User performs the minimum unavoidable host action
+→ Codex resumes the same task
 
-Two or more materially valid outcomes remain and the correct selection depends on User preference rather than existing design/task semantics.
+SETUP_COMPLETE + ordinary operation
+→ no recurring password/user-switch/TCC prompt is acceptable
+→ recurrence is deployment regression/recovery, not normal checkpoint behavior
+```
 
-Routine reversible engineering choices under a clear contract do not qualify.
+Codex must not deliberately trigger the same denied/missing permission through several commands in order to obtain repeated prompts. Diagnose with non-mutating health/preflight first, then surface one owning recovery action.
 
-## DESTRUCTIVE_OR_IRREVERSIBLE
-
-The proposed action can materially delete, overwrite, replace, or irreversibly migrate persistent/shared state and has not already been explicitly authorized.
-
-## EXTERNAL_OR_PUBLIC_SIDE_EFFECT
-
-The proposed action crosses a meaningful outside-world boundary such as publication, release, external send, public visibility, account/repository administration, or externally visible creation, when authorization is not already explicit.
-
-Ordinary task-authorized `git push` to the declared task branch is not reclassified as a new checkpoint merely because it is remote.
-
-## AUTHORITY_OR_SCIENTIFIC_CHANGE
-
-Execution reveals that current project design, scientific/product semantics, trust/provenance rules, or another authority-bearing contract must be changed/reopened before continuing.
-
-## SECURITY_CREDENTIAL_PERMISSION
-
-Execution requires a new credential, permission, security-boundary change, sensitive access grant, or comparable trust decision not already authorized.
+When a host permission state is already covered by the committed task/User authorization, routine setup commands may proceed without an additional semantic `ask_human` decision; macOS itself may still require the User to enter a password or click a consent control once.
 
 # What must NOT trigger ask_human
 
-Do not turn human-in-loop into permission spam.
-
-Examples that normally proceed without an additional checkpoint when already covered by current authority:
+Examples that normally proceed without another semantic checkpoint when already covered by authority:
 
 ```text
 routine reversible implementation choice
 normal test/format/build command
-expected retry within accepted recovery semantics
-creating task-local tmp state
-committing/pushing to the task-authorized branch
-choosing an equivalent low-level implementation detail
-following an explicit choice already made in current design/task
+expected bounded retry under accepted recovery semantics
+task-local tmp/worktree creation
+task-authorized commit/push/fresh-fetch
+routine stable-signed install/update after onboarding
+worker health/preflight checks
+an already-authorized setup step whose only remaining action is the host's native password/TCC UI
 ```
 
-Codex's own shell/sandbox permission prompts remain host permission mechanics and are not replaced by the semantic `ask_human` protocol.
-
-# Mandatory checkpoint lifecycle
+# Mandatory decision lifecycle
 
 ```text
 checkpoint detected
-→ construct the smallest safe canonical AskHuman request
-→ include the real project/task context needed for the decision
+→ construct smallest safe canonical request
+→ include real project/task context
 → call ask_human
 → pause affected path
-→ accept only one correlated canonical result
-→ map stable selected_choice_id to the authorized continuation
-→ continue or stop exactly according to that choice
+→ accept one correlated canonical result
+→ map stable selected_choice_id to continuation
+→ continue/stop exactly according to that choice
 ```
 
-Do not substitute:
+Never substitute default approval, timeout approval, guessed preference, uncorrelated free-form interpretation, or silent fallback.
 
-```text
-default approval
-timeout approval
-guessed User preference
-free-form reply interpretation outside canonical correlation
-silent fallback to a local terminal question when the mandatory remote/tool checkpoint is unavailable
-```
-
-If `ask_human` is required but unavailable or cannot obtain a valid result:
+If a required semantic checkpoint cannot obtain a valid human result:
 
 ```text
 TASK STATE → BLOCKED
 ```
 
-The affected action is not executed.
+# Deployment/recovery lifecycle
+
+If the product is not `SETUP_COMPLETE`, or a material host predicate regresses, Codex reports the single owning state from the deployment/channel health model, for example:
+
+```text
+ADMIN_AUTH_REQUIRED
+BOT_SESSION_LOGIN_REQUIRED
+BOT_MESSAGES_ACCOUNT_UNAVAILABLE
+permission_missing / automation_consent_required
+RUNTIME_IDENTITY_MIGRATION_REQUIRED
+```
+
+The final user-facing instruction must be compact and actionable. Repeated copies of the same unresolved host checkpoint are suppressed.
+
+After setup, ordinary Codex/MCP/channel operation is expected to run while the User is away from the Mac. A task that unexpectedly requires a new local password, user switch, or TCC consent must treat that as recovery/defect evidence and not silently normalize it.
 
 # Terminal notification lifecycle
 
-Human notification is attempted for every normal terminal state:
+For every normal terminal verdict:
 
 ```text
 PASS
@@ -162,49 +156,22 @@ BLOCKED
 FAIL
 ```
 
-Ordering is strict for repository-changing tasks:
+ordering for repository-changing work is:
 
 ```text
-complete normal task execution/result
-→ write required FORMAL report when applicable
-→ commit task-scoped repository changes
+complete task result/report
+→ commit task-scoped changes
 → push owning branch
-→ fresh fetch
-→ prove local task HEAD == fetched upstream HEAD when the task requires repository publication
-→ call notify_human
-→ return final Codex response
+→ fresh fetch / required equality proof
+→ attempt notify_human
+→ final Codex response
 ```
 
-For non-repository tasks, notify after the normal terminal result is established.
+The notification is compact: project, task id when available, verdict, one short summary/blocker, and durable locator when available. It never contains credentials, raw transport ids, complete reports, or long logs.
 
-A terminal phone message is compact. It contains only decision-relevant status and a durable locator where available:
+Notification failure does not rewrite the established task verdict.
 
-```text
-project
-task_id
-verdict
-one short summary or blocker
-branch/commit or report locator
-```
-
-Do not send the complete task body, report, logs, stack traces, private recipient/configuration, or long test output.
-
-# Notification failure semantics
-
-`notify_human` is best-effort after the task verdict exists.
-
-```text
-TASK_VERDICT: PASS
-notify_human: FAILED
-→ TASK_VERDICT remains PASS
-→ final Codex response/report evidence surfaces HUMAN_NOTIFICATION: FAILED
-```
-
-The same rule applies to other terminal verdicts: notification transport failure does not rewrite the underlying task result.
-
-No indefinite retry or wait-for-acknowledgement loop is allowed. A bounded retry may be used only when transport semantics justify it.
-
-# Skill authority and discovery
+# Skill authority and MCP registration
 
 The maintained Skill is first-party and remote-canonical:
 
@@ -212,31 +179,15 @@ The maintained Skill is first-party and remote-canonical:
 cigit-zgy/human-in-loop@<accepted-commit>:SKILL.md
 ```
 
-Codex-home policy or local Skill discovery must resolve to an exact accepted revision. A local path/symlink is convenience only and must not silently substitute stale Skill content.
+Machine-wide discovery must resolve an exact accepted revision; a stale local folder is not authority.
 
-When a new accepted Skill revision is adopted globally, update the machine-wide coordinate deliberately rather than following unreviewed `latest`.
+`$CODEX_HOME/config.toml` registers the production local MCP server only. It does not embed transport credentials or duplicate policy. Existing unrelated Codex configuration is preserved.
 
-# MCP registration
+# Project/task extensions
 
-`$CODEX_HOME/config.toml` owns only MCP capability registration/runtime configuration. It should expose the production local human-in-loop MCP server without embedding policy semantics or secrets in AGENTS/Skill text.
+Projects/tasks add only genuinely domain-specific checkpoints, for example scientific ambiguity, destructive replacement of validated artifacts, login/MFA/CAPTCHA, publication/release authorization, or repository visibility/licensing changes.
 
-Preserve existing unrelated Codex configuration. Do not replace the whole config file merely to add this MCP server.
-
-Private channel recipient/configuration remains in the human-in-loop application's local configuration owner, not in Codex AGENTS or committed repository files.
-
-# Project-specific extension
-
-Projects add only checkpoints that are genuinely domain-specific, for example:
-
-```text
-scientific interpretation ambiguity
-validated scientific-object destructive replacement
-login/MFA/CAPTCHA boundary
-publication/release authorization
-repository-visibility/licensing change
-```
-
-These belong in the owning project `AGENTS.md` or committed task, not in the global Skill unless they generalize across projects.
+Do not copy such project-specific semantics into the global Skill unless they generalize.
 
 # Design acceptance
 
@@ -244,11 +195,11 @@ This integration is conforming when:
 
 ```text
 all Codex tasks receive one thin global human-in-loop activation rule
-AND ask_human is used only for real mandatory decision boundaries
-AND required checkpoints fail closed when the tool/result is unavailable
-AND ordinary already-authorized work does not receive redundant approval prompts
-AND every normal terminal verdict attempts a compact notify_human report
-AND notification failure never falsifies the established task verdict
-AND MCP registration is machine-local and preserves existing Codex configuration
-AND global/project/task rules remain separate owners rather than copied manuals
+AND ask_human is used only for real semantic decision boundaries
+AND required decisions fail closed when no valid result exists
+AND already-authorized routine work receives no redundant approval prompts
+AND setup/recovery host mechanics are consolidated rather than repeatedly prompted
+AND SETUP_COMPLETE normal operation requires no recurring password/user-switch/TCC interaction
+AND every normal terminal verdict attempts compact notify_human reporting
+AND MCP registration/policy/project/task concerns remain separate owners
 ```
