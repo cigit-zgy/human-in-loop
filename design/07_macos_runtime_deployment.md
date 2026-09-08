@@ -4,11 +4,12 @@ title: macOS runtime deployment and permission stability
 status: active
 role: design_authority
 summary: >
-  Defines stable code identity, bounded privileged bootstrap, TCC ownership,
-  protected-folder behavior, and minimal user switching for the local macOS
-  human-in-loop runtime and dedicated iMessage Bot worker.
+  Defines stable code identity, one-time onboarding/bootstrap, TCC ownership,
+  setup-complete readiness, recovery states, protected-folder behavior, and
+  unattended normal operation for the local macOS runtime and Bot worker.
 operational_projection:
   - scripts/install.sh
+  - scripts/macos-bootstrap.sh
   - src-tauri/src/commands/
   - src-tauri/src/channels/imessage.rs
   - src-tauri/src/daemon/
@@ -16,109 +17,177 @@ operational_projection:
 
 # Purpose
 
-Make the local macOS deployment repeatable without asking the User to re-enter an administrator password, re-grant Documents access, or re-approve Automation after ordinary human-in-loop rebuilds and reinstalls.
+Make the macOS deployment usable for its actual purpose: the User may be away from the computer while Agents request decisions or report task results.
 
-This topic owns local deployment identity and permission lifecycle. Apple Messages transport semantics, sender/recipient identity, reply correlation, and iMessage-only rules remain owned by `03_imessage_channel.md`.
+Interactive setup is permitted once where macOS or Apple genuinely requires it. After setup is complete, ordinary human-in-loop operation must not depend on repeated administrator passwords, Keychain prompts, Fast User Switching, Documents approval, Full Disk Access approval, or Automation approval.
+
+This topic owns deployment identity and permission lifecycle. Apple Messages transport semantics, sender/recipient identity, reply correlation, and iMessage-only rules remain owned by `03_imessage_channel.md`.
+
+# Deployment identities
+
+The deployment separates:
+
+```text
+primary macOS user
+= runs Codex / MCP / coordinator
+= may own repositories, including repositories under protected folders
+
+Bot macOS user
+= dedicated Apple Messages transport user
+= default documented username: human-in-loop
+= owns Bot Messages.app session, Bot Apple Account, worker, imsg, Messages DB and Bot TCC grants
+```
+
+The primary local username is configuration, never hard-coded project semantics. The Bot username may also be explicitly configured when an installation needs a different dedicated local account.
 
 # Stable runtime code identity
 
-macOS privacy/TCC grants are part of production readiness, so the runtime code identity must remain stable across qualified rebuild/install cycles.
+macOS privacy/TCC grants are part of production readiness, so the installed requester identity must remain stable across qualified rebuild/install cycles.
 
-Ad-hoc signing is not accepted for the installed production Bot worker after privacy grants have been established because its code identity may change with each build.
+Ad-hoc signing is not accepted for an already-authorized production worker because ordinary rebuilds may change the requester identity seen by TCC.
 
-The installed runtime uses a fixed signing identifier and a stable local code-signing identity.
-
-For this single-machine deployment, signing identity preference is:
+The installed runtime uses:
 
 ```text
-explicitly configured Apple Development / Developer ID identity
-→ otherwise machine-local human-in-loop Code Signing certificate
+fixed signing identifier
++ stable signing identity
++ stable installed path
+```
+
+Signing identity preference:
+
+```text
+explicit Apple Development / Developer ID identity
+→ otherwise machine-local human-in-loop Code Signing certificate for source/local installs
 ```
 
 A machine-local certificate:
 
-- is created once;
-- is stored only in the local macOS Keychain;
-- is not committed or exported by the project;
-- is used only to establish stable local code identity;
-- is not represented as public distribution/notarization evidence.
+- is created once during onboarding when needed;
+- remains only in the local macOS Keychain;
+- is not committed/exported by the project;
+- exists only to preserve a stable local code identity;
+- is not represented as public notarization/distribution evidence.
 
-The installer records/verifies the installed binary's designated requirement. Before replacing an already-authorized runtime, the candidate must satisfy the expected stable identity. If the expected identity changes, installation fails closed and requires an explicit permission-migration checkpoint rather than silently replacing the requester.
+The installer records/verifies the installed binary's designated requirement. A candidate that does not satisfy the accepted stable identity is rejected before replacement and reports `RUNTIME_IDENTITY_MIGRATION_REQUIRED`.
 
-The production worker executable path is stable and outside protected personal folders:
+Stable shared runtime paths are outside personal protected folders, for example:
 
 ```text
 /Users/Shared/human-in-loop/bin/human-in-loop
+/Users/Shared/human-in-loop/bin/imsg
 ```
 
-The installed `imsg` path used by the worker is likewise stable and explicit.
+# One-time onboarding and bounded privilege
 
-# One-time bounded privileged bootstrap
+System-level preparation is concentrated into one explicit setup/bootstrap phase.
 
-Administrator authentication and macOS TCC consent are separate concerns.
+The User may authenticate administrator privileges once for a bounded allow-listed bootstrap. The project may use `sudo -v` followed only by predefined `sudo -n` operations required for setup. It must not leave an unrestricted root shell, persistent privileged helper, or broad sudo policy for Codex.
 
-System-level changes are concentrated into one bounded bootstrap operation. The User authenticates administrator privileges once for that operation. The implementation may validate a sudo timestamp or invoke one allow-listed privileged helper, but it must not leave an unrestricted root shell or broad long-lived privileged agent for Codex.
-
-The privileged bootstrap may perform only task-owned system setup such as:
+The privileged bootstrap may perform only setup-owned operations such as:
 
 ```text
 shared runtime directory/group ownership
 required local user/group membership
 fixed install-path preparation
-LaunchAgent/bootstrap files when system ownership requires it
+LaunchAgent/bootstrap-file installation where privileged ownership is genuinely required
 ```
 
-Normal runtime, health checks, message sends, MCP calls, deterministic tests, and routine qualified binary replacement do not require repeated administrator-password prompts unless they genuinely change protected system state.
+Normal operation and qualified routine updates do not repeatedly ask for administrator authentication.
 
-If an operation cannot proceed without new administrator authorization, it reports one explicit `ADMIN_AUTH_REQUIRED` checkpoint rather than repeatedly invoking password prompts from separate commands.
+If new protected system state genuinely requires authorization, return one consolidated `ADMIN_AUTH_REQUIRED` recovery checkpoint rather than allowing several commands to each request a password.
 
 # TCC and privacy ownership
 
-Full Disk Access, Files & Folders, and Automation/Apple Events are independent macOS consent gates. `sudo` does not satisfy or bypass them.
+Administrator authentication and macOS privacy consent are separate gates. `sudo` cannot grant or bypass TCC.
 
-Permissions belong to the user/process context that performs the protected operation.
-
-For Apple Messages production transport:
+Relevant gates include:
 
 ```text
-macOS user      = human-in-loop
-Messages.app    = Bot user's Messages session
-worker          = stable installed human-in-loop identity
-imsg            = stable explicit installed path
+Files & Folders / Documents
+Full Disk Access
+Automation / Apple Events
 ```
 
-The Bot user owns its Messages database access and Automation → Messages authorization. The primary user does not read the Bot Messages database directly.
+Permissions belong to the exact user/process context performing the operation.
 
-The primary `Guangyao Zhao` runtime receives only permissions required for its own operations. It is not granted Bot-user Full Disk Access merely for convenience.
+Apple Messages production context:
+
+```text
+Bot macOS user
+→ stable installed Bot worker
+→ stable external imsg path
+→ Bot user's Messages.app
+```
+
+The Bot worker owns its Messages database access and Automation → Messages authorization. The primary coordinator does not read the Bot user's Messages database directly.
+
+The primary runtime receives only access required for primary-user responsibilities. If repository identity resolution needs a repository under Documents, that access belongs to the stable primary runtime only. The Bot worker never receives or traverses the repository path.
+
+# Setup state model
+
+Production readiness is derived from health predicates, not from an unchecked “setup done” flag.
+
+Conceptual setup states are:
+
+```text
+SETUP_NEEDS_BOT_USER
+SETUP_NEEDS_BOT_LOGIN
+SETUP_NEEDS_RUNTIME_BOOTSTRAP
+SETUP_NEEDS_TCC_CONSENT
+SETUP_NEEDS_NOTIFICATION_QUALIFICATION
+SETUP_COMPLETE
+RECOVERY_REQUIRED
+```
+
+The implementation may use more specific health codes, but the user-facing setup flow must remain one coherent state machine rather than a sequence of unrelated prompts.
+
+`SETUP_COMPLETE` requires all current predicates to be true:
+
+```text
+stable runtime identity ready
+shared runtime paths ready
+Bot macOS user exists
+Bot graphical/login session active
+Bot Messages account and iMessage active
+Bot sender and recipient identities verified/distinct
+Bot Messages database access ready
+Automation → Messages ready
+explicit iMessage-only route ready
+initial real notification presentation HUMAN_VERIFIED
+structured reply/correlation verified
+```
+
+A stale historical success does not override current health. If one predicate later becomes false, the installation enters the owning recovery state.
 
 # Permission bootstrap order
 
-Permission qualification occurs only after the final stable installed identity exists.
+Grant privacy permissions only after the final stable requester identity exists.
 
 Required order:
 
 ```text
 build candidate
-→ sign with stable identity
+→ stable-sign candidate
 → verify designated requirement
-→ install final shared binary
-→ start exact Bot-user worker identity
-→ perform non-mutating permission preflight
-→ User grants any missing TCC consent once
-→ re-check same final identity
-→ mark permission predicates ready
-→ only then permit a real message mutation
+→ install final shared runtime
+→ launch exact Bot-user worker identity
+→ perform non-mutating readiness preflight
+→ ask User for only the missing TCC consent, once
+→ re-check the same final requester
+→ run notification/reply qualification
+→ SETUP_COMPLETE
 ```
 
-Do not grant Automation to a temporary/debug/ad-hoc binary and then replace that binary before release E2E.
+Never approve a temporary/debug/ad-hoc requester and replace it afterward.
 
 # Automation preflight
 
 Automation → Messages must be proven before the Apple Messages channel may report `bootstrap_required` or `ready`.
 
-The worker exposes/uses a non-message-producing Automation preflight through the same responsible process context used for production sends. The preferred implementation uses the documented AppleEvents authorization mechanism, such as `AEDeterminePermissionToAutomateTarget`, with explicit control over whether the User should be prompted.
+The exact production worker uses a non-message-producing Automation preflight in the same responsible process context used by real sends. The preferred public mechanism is the documented AppleEvents authorization path such as `AEDeterminePermissionToAutomateTarget`.
 
-The preflight must distinguish at least:
+At minimum distinguish:
 
 ```text
 automation_ready
@@ -127,31 +196,31 @@ automation_denied
 automation_target_unavailable
 ```
 
-A missing/denied Automation grant becomes an actionable permission health state and prevents a real send. Do not use a real iMessage as a permission probe.
+Do not use a real iMessage as a permission probe.
 
-# Protected-folder behavior
+# Protected-folder contract
 
-The Bot worker and `imsg` runtime must not traverse the source repository or ambient protected folders such as Documents, Desktop, or Downloads.
+The Bot worker and `imsg` must not traverse source repositories or ambient Documents/Desktop/Downloads paths.
 
-The primary coordinator may access an explicitly supplied repository path only for the bounded operation that requires it, such as canonical GitHub repository identity resolution. It does not recursively scan protected personal folders for ambient project discovery.
+The primary coordinator may access only an explicitly supplied repository path for a bounded need such as GitHub-origin identity resolution. It must not recursively scan protected personal folders for ambient projects.
 
-If the primary runtime needs access to Documents because the User's repository is located there, grant that access once to the stable runtime identity. Repeated Files & Folders prompts after the stable identity is established are a deployment defect.
+After stable identity qualification, repeated Files & Folders/Documents prompts for the same intended access are a deployment regression.
 
 # User-switch policy
 
-Fast User Switching is an exceptional setup/recovery action, not a normal operating mechanism.
+Fast User Switching is an exceptional setup/recovery action, never normal operation.
 
-User switching is required only when the action genuinely belongs to the Bot graphical session:
+A Bot-session switch is justified only for actions genuinely owned by that GUI session:
 
 ```text
-first Bot Apple Account / Messages login
+first Bot Messages / Apple Account login
 first iMessage activation
-first macOS privacy consent that requires Bot-user UI
+first Bot-session TCC consent when macOS requires UI there
 post-reboot Bot login
-Apple/macOS account or TCC recovery that explicitly requires that session
+Apple/macOS recovery that explicitly requires that session
 ```
 
-Once the Bot graphical session is established and permissions are qualified, normal operation remains in the primary `Guangyao Zhao` session:
+After `SETUP_COMPLETE`, ordinary work stays in the primary session:
 
 ```text
 Codex / MCP / coordinator
@@ -160,50 +229,103 @@ Codex / MCP / coordinator
 → imsg / Messages.app
 ```
 
-Do not ask the User to switch accounts for ordinary install checks, worker health, log inspection, deterministic tests, sends, or reply handling when the worker/IPC boundary can perform them.
+Normal health checks, tests, sends, replies, notifications, worker restarts, and qualified updates do not ask the User to switch accounts.
 
-# Build and update lifecycle
+# Normal-operation zero-interaction contract
 
-A development rebuild does not automatically become the active production worker.
+After `SETUP_COMPLETE`, ordinary operation must require:
+
+```text
+administrator password prompts    0
+Keychain password prompts          0
+Fast User Switching                0
+new Full Disk Access prompts       0
+new Automation prompts             0
+new Files & Folders prompts        0
+```
+
+If one appears during ordinary operation, treat it as a deployment regression or explicit recovery condition. Do not normalize repeated host prompts as acceptable UX.
+
+Codex shell/sandbox permission mechanics are distinct from product TCC, but maintained setup/installation should avoid causing recurring host-level prompts by changing executable identity or protected paths unnecessarily.
+
+# Recovery model
+
+Human interaction may recur only because actual host/account state changed, including:
+
+```text
+Mac reboot and Bot login session not re-established
+Bot Messages / Apple Account signed out
+User revoked a required TCC grant
+stable signing identity deleted or intentionally migrated
+major macOS change invalidated a valid grant
+Bot/recipient identity intentionally changed
+```
+
+Each recovery state should provide one actionable instruction and should suppress repeated duplicate requests for the same unresolved condition.
+
+A real reboot is a known lifecycle boundary: Apple Messages cannot be considered ready until the Bot login session is re-established. Sleep, lock, and ordinary Fast User Switching away from an already logged-in Bot session do not require re-onboarding.
+
+# Build/update lifecycle
+
+A development build does not automatically become the active authorized worker.
 
 ```text
 source change
 → build/test
 → stable-sign candidate
-→ verify expected designated requirement
-→ install atomically to stable path
+→ verify accepted designated requirement
+→ atomic install to stable path
 → restart worker
-→ non-mutating TCC readiness check
+→ non-mutating health/TCC checks
 ```
 
-If the designated requirement no longer matches the expected identity, stop before replacing the active worker and report `RUNTIME_IDENTITY_MIGRATION_REQUIRED`.
+Routine qualified updates should preserve the same accepted identity and proceed without sudo or new TCC consent once shared paths are prepared.
 
-A future public binary release may use Developer ID/notarization. Moving from a machine-local signing identity to a public distribution identity is an explicit migration that may require a one-time TCC reauthorization; it is not silently treated as an ordinary update.
+Moving from a machine-local signing identity to a public Developer ID/notarized distribution identity is an explicit migration. It may require one controlled reauthorization and must not be silently treated as a routine update.
 
-# Health/readiness projection
+# Open-source onboarding contract
 
-This topic supplies deployment predicates to the Apple Messages channel:
+The public user flow is intentionally small and honest:
+
+```text
+1. User creates a dedicated standard macOS Bot user.
+2. User logs into it and signs Messages into a distinct Bot Apple Account.
+3. User returns to the primary account and runs one documented human-in-loop setup/bootstrap command.
+4. Setup prepares the stable runtime and reports one consolidated remaining permission checkpoint, if any.
+5. User grants the required Bot-session privacy permissions once.
+6. Setup performs one real notification/reply qualification.
+7. Setup reports SETUP_COMPLETE with a compact readiness table.
+8. Ordinary operation thereafter is unattended.
+```
+
+The setup command must not pretend Apple Account credentials can be automated or captured safely. Passwords, 2FA, signing private keys, and channel credentials remain outside committed project state.
+
+# Readiness projection
+
+This topic supplies deployment predicates to Apple Messages:
 
 ```text
 stable_runtime_identity
 bot_worker_session_active
 messages_database_permission_ready
 automation_permission_ready
+setup_complete / recovery state
 ```
 
-The iMessage channel may enter `bootstrap_required` only after all non-chat deployment predicates are ready. Absence of a deterministic chat is the only reason for `bootstrap_required`; missing Automation is a permission failure, not bootstrap readiness.
+`bootstrap_required` means only “all non-chat prerequisites are ready but the direct iMessage chat is not yet deterministic.” Missing Automation or another deployment predicate is not bootstrap readiness.
 
 # Design acceptance
 
 The macOS deployment is conforming when:
 
 ```text
-ordinary rebuild/install does not change the expected runtime designated requirement
-TCC grants are requested only for the final installed requester identity
-Automation readiness is checked before any real send
-one bootstrap administration authentication covers bounded system setup without a persistent root shell
-normal operation does not require repeated user switching
-Bot worker never reads source repositories or protected personal folders unnecessarily
-repeated Documents or Automation prompts after stable identity qualification are treated as defects
-real Apple Messages E2E begins only after the exact worker identity is permission-ready
+one bounded setup path reaches SETUP_COMPLETE
+AND ordinary rebuild/install preserves the expected designated requirement
+AND TCC grants are requested only for the final stable requester identity
+AND Automation readiness is proven before any real send
+AND normal operation needs no password, user switching, or new privacy consent
+AND the Bot worker never reads source repositories/protected personal folders unnecessarily
+AND repeated Documents/Automation/FDA prompts after setup are treated as defects/recovery
+AND recovery states consolidate user action instead of producing repeated prompts
+AND the public onboarding docs can be followed without exposing Apple/macOS credentials to the project
 ```
