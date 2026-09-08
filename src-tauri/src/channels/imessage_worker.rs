@@ -105,6 +105,7 @@ fn launch_agent_plist(executable: &str, home: &str) -> String {
   <key>EnvironmentVariables</key>
   <dict>
     <key>HUMAN_IN_LOOP_HOME</key><string>{}</string>
+    <key>HUMAN_IN_LOOP_IMSG_EXECUTABLE</key><string>{}</string>
     <key>PATH</key><string>{}:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
   <key>RunAtLoad</key><true/>
@@ -117,6 +118,7 @@ fn launch_agent_plist(executable: &str, home: &str) -> String {
 "#,
         xml(executable),
         xml(home),
+        xml(SHARED_IMSG),
         xml(&bin_dir),
     )
 }
@@ -862,6 +864,7 @@ pub fn dispatch(args: &[String]) -> Result<String, String> {
         Some("install") => install(&args[1..]),
         Some("run") if args.len() == 1 => {
             std::env::set_var("PATH", worker_runtime_path());
+            std::env::set_var(crate::channels::imessage::IMSG_EXECUTABLE_ENV, SHARED_IMSG);
             crate::cli::cfgio::block_on(serve())?;
             Ok(String::new())
         }
@@ -936,6 +939,8 @@ mod tests {
         assert!(plist.contains("<string>run</string>"));
         assert!(plist.contains("<key>KeepAlive</key>"));
         assert!(plist.contains("/Users/Shared/human-in-loop/bin"));
+        assert!(plist.contains("HUMAN_IN_LOOP_IMSG_EXECUTABLE"));
+        assert!(plist.contains("/Users/Shared/human-in-loop/bin/imsg"));
         assert!(!plist.contains("bot@example.com"));
         assert!(!plist.contains("person@example.com"));
     }

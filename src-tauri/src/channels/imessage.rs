@@ -25,9 +25,20 @@ pub const MAX_CHOICE_LABEL_CHARS: usize = 60;
 pub const MAX_RENDERED_CHARS: usize = 700;
 pub const MAX_IMAGE_BYTES: u64 = 5 * 1024 * 1024;
 pub(crate) const SUPPORTED_IMSG_VERSION: &str = "0.15.1";
+pub(crate) const IMSG_EXECUTABLE_ENV: &str = "HUMAN_IN_LOOP_IMSG_EXECUTABLE";
 const CHAT_SCAN_LIMIT: usize = 10_000;
 const CHAT_SCAN_TIMEOUT: Duration = Duration::from_secs(90);
 const POST_SEND_CHAT_LIMIT: usize = 20;
+
+fn imsg_program_from_override(value: Option<std::ffi::OsString>) -> std::ffi::OsString {
+    value
+        .filter(|path| !path.is_empty())
+        .unwrap_or_else(|| std::ffi::OsString::from("imsg"))
+}
+
+fn imsg_program() -> std::ffi::OsString {
+    imsg_program_from_override(std::env::var_os(IMSG_EXECUTABLE_ENV))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnsupportedReason {
@@ -527,7 +538,7 @@ fn readiness_from_chats(
 async fn list_chats(limit: usize, deadline: Duration) -> Result<Vec<ChatRecord>, HealthState> {
     let output = timeout(
         deadline,
-        Command::new("imsg")
+        Command::new(imsg_program())
             .kill_on_drop(true)
             .args(["chats", "--limit", &limit.to_string(), "--json"])
             .output(),
@@ -561,7 +572,7 @@ pub async fn prepare(config: &IMessageChannelConfig) -> Result<Readiness, Health
     }
     let version = timeout(
         Duration::from_secs(5),
-        Command::new("imsg")
+        Command::new(imsg_program())
             .kill_on_drop(true)
             .arg("--version")
             .output(),
@@ -641,7 +652,7 @@ pub async fn send(
 ) -> Result<SendReceipt, HealthState> {
     let output = timeout(
         Duration::from_secs(60),
-        Command::new("imsg")
+        Command::new(imsg_program())
             .kill_on_drop(true)
             .args(direct_send_args(config.recipient.trim(), text, image))
             .output(),
@@ -679,7 +690,7 @@ pub struct ResolvedRequest {
 async fn history(chat_id: i64, limit: usize) -> Result<Vec<InboundMessage>, HealthState> {
     let output = timeout(
         Duration::from_secs(10),
-        Command::new("imsg")
+        Command::new(imsg_program())
             .kill_on_drop(true)
             .args([
                 "history",
@@ -865,7 +876,7 @@ fn spawn_watch_process(
         since_row_id.to_string(),
         "--json".into(),
     ]);
-    let mut child = Command::new("imsg")
+    let mut child = Command::new(imsg_program())
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -1266,6 +1277,24 @@ mod tests {
         assert!(compatible_version(b"0.15.1\n"));
         assert!(!compatible_version(b"0.15.0\n"));
         assert!(!compatible_version(b"0.16.0\n"));
+    }
+
+    #[test]
+    fn imsg_program_uses_a_pinned_worker_override_or_the_normal_path_lookup() {
+        assert_eq!(
+            imsg_program_from_override(None),
+            std::ffi::OsString::from("imsg")
+        );
+        assert_eq!(
+            imsg_program_from_override(Some(std::ffi::OsString::new())),
+            std::ffi::OsString::from("imsg")
+        );
+        assert_eq!(
+            imsg_program_from_override(Some(std::ffi::OsString::from(
+                "/Users/Shared/human-in-loop/bin/imsg"
+            ))),
+            std::ffi::OsString::from("/Users/Shared/human-in-loop/bin/imsg")
+        );
     }
 
     #[test]
