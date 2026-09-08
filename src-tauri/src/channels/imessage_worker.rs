@@ -121,6 +121,16 @@ fn launch_agent_plist(executable: &str, home: &str) -> String {
     )
 }
 
+fn worker_runtime_path() -> String {
+    format!(
+        "{}:/usr/bin:/bin:/usr/sbin:/sbin",
+        Path::new(SHARED_IMSG)
+            .parent()
+            .unwrap_or_else(|| Path::new("/Users/Shared/human-in-loop/bin"))
+            .display()
+    )
+}
+
 fn parse_install_args(args: &[String]) -> Result<String, String> {
     if args.len() != 2 || args[0] != "--coordinator-user" {
         return Err("usage: imessage-worker install --coordinator-user <short-name>".into());
@@ -851,6 +861,7 @@ pub fn dispatch(args: &[String]) -> Result<String, String> {
     match args.first().map(String::as_str) {
         Some("install") => install(&args[1..]),
         Some("run") if args.len() == 1 => {
+            std::env::set_var("PATH", worker_runtime_path());
             crate::cli::cfgio::block_on(serve())?;
             Ok(String::new())
         }
@@ -927,6 +938,14 @@ mod tests {
         assert!(plist.contains("/Users/Shared/human-in-loop/bin"));
         assert!(!plist.contains("bot@example.com"));
         assert!(!plist.contains("person@example.com"));
+    }
+
+    #[test]
+    fn worker_runtime_path_uses_only_the_shared_install_and_system_bins() {
+        assert_eq!(
+            worker_runtime_path(),
+            "/Users/Shared/human-in-loop/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        );
     }
 
     #[test]
