@@ -193,6 +193,9 @@ struct ServerState {
     draining: AtomicBool,
     /// 活动请求登记表。
     registry: Arc<RequestRegistry>,
+    /// In-flight informational dispatches are drainable work, never pending human decisions.
+    notifications: tokio_util::task::TaskTracker,
+    notification_cancel: tokio_util::sync::CancellationToken,
     /// Cross-process popup focus owner and background cascade order.
     popup_focus: Mutex<PopupFocusArbiter>,
     /// 钉钉长连接 Router（惰性建连、常热复用；连接死亡后按需重连）。
@@ -262,6 +265,10 @@ impl ServerState {
     /// 的短暂陈旧，下一次读取即新。
     fn config_snapshot(&self) -> AppConfig {
         self.config.lock().unwrap().clone()
+    }
+
+    fn pending_delivery_count(&self) -> usize {
+        self.registry.active_count() + self.notifications.len()
     }
 }
 
@@ -848,6 +855,8 @@ async fn serve(_lock: LockGuard) -> i32 {
         shutdown: tokio::sync::Notify::new(),
         draining: AtomicBool::new(false),
         registry: RequestRegistry::new(),
+        notifications: tokio_util::task::TaskTracker::new(),
+        notification_cancel: tokio_util::sync::CancellationToken::new(),
         popup_focus: Mutex::new(PopupFocusArbiter::new()),
         dd_router: tokio::sync::Mutex::new(None),
         fs_router: tokio::sync::Mutex::new(None),
@@ -1074,6 +1083,11 @@ async fn serve(_lock: LockGuard) -> i32 {
         }
     }
 
+    state.draining.store(true, Ordering::SeqCst);
+    state.notification_cancel.cancel();
+    state.notifications.close();
+    state.notifications.wait().await;
+
     // Shutting down: cancel any in-flight requests so their IM cards finalize to "Cancelled".
     // Unlike CLI-disconnect, the runtime is about to exit, so we give the finalize HTTP calls a
     // brief bounded window to land (sessions may take up to ~1s to notice the cancel + ~0.3s HTTP).
@@ -1198,6 +1212,7 @@ fn permission_rule_infos(
 enum Control {
     Submit(Box<TaskRequest>),
     SubmitConfirm(Box<ConfirmTask>),
+    NotifyHuman(Box<crate::models::HumanNotification>),
     Gui(String),
     /// 方案6 预热弹窗握手：接管连接，入热池待命、等领用。
     GuiWarm,
@@ -1226,6 +1241,12 @@ async fn handle_conn(stream: Stream, state: Arc<ServerState>) {
     match control_loop(&mut reader, &mut w, &state).await {
         Control::Submit(task) => handle_submit(*task, reader, w, &state).await,
         Control::SubmitConfirm(task) => handle_submit_confirm(*task, reader, w, &state).await,
+        Control::NotifyHuman(notification) => {
+            state
+                .notifications
+                .track_future(handle_notification(*notification, reader, w, &state))
+                .await
+        }
         Control::Gui(token) => handle_gui(token, reader, w, &state).await,
         Control::GuiWarm => handle_gui_warm(reader, w, &state).await,
         Control::AgentsSub => handle_agents_sub(reader, w, &state).await,
@@ -1286,7 +1307,7 @@ async fn control_loop(
                     .map(|v| v != "0")
                     .unwrap_or(true);
                 // 过时且有在途请求 → 进入排空（不打断在途）；无在途 → 立即换新（零延迟）。
-                let draining = stale && auto_restart && state.registry.active_count() > 0;
+                let draining = stale && auto_restart && state.pending_delivery_count() > 0;
                 let restarting = stale && auto_restart && !draining;
                 let ack = HelloAck {
                     protocol_version: ipc::PROTOCOL_VERSION,
@@ -1333,7 +1354,7 @@ async fn control_loop(
             ClientMsg::Stop { force } => {
                 let _ = ipc::write_msg(w, &ServerMsg::Stopping).await;
                 // 默认 graceful：有在途请求时排空后退出；`--force` 或无在途 → 立即退出。
-                if !force && state.registry.active_count() > 0 {
+                if !force && state.pending_delivery_count() > 0 {
                     log("graceful stop requested; draining");
                     begin_drain(state);
                     return Control::Closed;
@@ -1344,6 +1365,7 @@ async fn control_loop(
             }
             ClientMsg::Submit(task) => return Control::Submit(Box::new(task)),
             ClientMsg::SubmitConfirm(task) => return Control::SubmitConfirm(task),
+            ClientMsg::NotifyHuman(notification) => return Control::NotifyHuman(notification),
             ClientMsg::GuiHello { token } => return Control::Gui(token),
             // 方案6 预热弹窗握手（无 token）：接管连接入热池待命。
             ClientMsg::GuiWarmReady => return Control::GuiWarm,
@@ -1712,7 +1734,7 @@ fn begin_drain(state: &Arc<ServerState>) {
     let state = state.clone();
     tokio::spawn(async move {
         loop {
-            if state.registry.active_count() == 0 {
+            if state.pending_delivery_count() == 0 {
                 log("drain complete; shutting down");
                 state.shutdown.notify_one();
                 return;
@@ -1999,6 +2021,43 @@ async fn await_confirm_while_dispatching(
             _ = &mut setup, if !setup_complete => setup_complete = true,
         }
     }
+}
+
+async fn handle_notification(
+    notification: crate::models::HumanNotification,
+    mut reader: Reader,
+    mut writer: OwnedWriteHalf,
+    state: &Arc<ServerState>,
+) {
+    if state.draining.load(Ordering::SeqCst) {
+        let _ = ipc::write_msg(
+            &mut writer,
+            &ServerMsg::Draining {
+                active: state.registry.active_count(),
+            },
+        )
+        .await;
+        return;
+    }
+    let config = state.config_snapshot();
+    let available = available_confirm_channels(&config);
+    let active = state.active_channel.lock().unwrap().clone();
+    // Notifications have no agent session/watch subscription to manufacture. Retain the
+    // configured active-channel selection and its existing no-popup reachability fallback.
+    let candidates = select_im_delivery_candidates(
+        config.channels.auto_activation,
+        &available,
+        active.as_deref(),
+        &[],
+        false,
+    );
+    let result = tokio::select! {
+        biased;
+        _ = state.notification_cancel.cancelled() => return,
+        _ = wait_cli_eof(&mut reader) => return,
+        result = crate::channels::notify::dispatch(&notification, &config, &candidates) => result,
+    };
+    let _ = ipc::write_msg(&mut writer, &ServerMsg::NotificationDispatched { result }).await;
 }
 
 /// CLI 提交一次任务：建请求、spawn GUI Helper、流式回结果；CLI 断开则取消。

@@ -658,6 +658,50 @@ async fn run_confirm_connection(
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum NotificationClientError {
+    #[error("human notification was cancelled by the MCP client")]
+    Cancelled,
+    #[error("human notification runtime is unavailable")]
+    Unavailable,
+}
+
+/// The socket is owned by this bounded future. Cancellation closes it so daemon dispatch stops.
+pub async fn run_notification_async(
+    notification: crate::models::HumanNotification,
+    cancel: tokio_util::sync::CancellationToken,
+) -> Result<crate::models::NotificationResult, NotificationClientError> {
+    let connection = async {
+        ensure_running()
+            .await
+            .map_err(|_| NotificationClientError::Unavailable)?;
+        let (mut reader, mut writer) = connect_split()
+            .await
+            .map_err(|_| NotificationClientError::Unavailable)?;
+        ipc::write_msg(&mut writer, &ClientMsg::Hello(hello()))
+            .await
+            .map_err(|_| NotificationClientError::Unavailable)?;
+        match ipc::read_msg::<_, ServerMsg>(&mut reader).await {
+            Ok(Some(ServerMsg::HelloAck(ack))) if ack.status == HelloStatus::Ok => {}
+            _ => return Err(NotificationClientError::Unavailable),
+        }
+        ipc::write_msg(&mut writer, &ClientMsg::NotifyHuman(Box::new(notification)))
+            .await
+            .map_err(|_| NotificationClientError::Unavailable)?;
+        match ipc::read_msg::<_, ServerMsg>(&mut reader).await {
+            Ok(Some(ServerMsg::NotificationDispatched { result })) => Ok(result),
+            _ => Err(NotificationClientError::Unavailable),
+        }
+    };
+    tokio::select! {
+        biased;
+        _ = cancel.cancelled() => Err(NotificationClientError::Cancelled),
+        result = tokio::time::timeout(crate::channels::notify::DISPATCH_TIMEOUT + Duration::from_secs(20), connection) => {
+            result.unwrap_or(Err(NotificationClientError::Unavailable))
+        }
+    }
+}
+
 async fn read_confirm_frames<R>(reader: &mut R) -> Option<crate::models::ConfirmResult>
 where
     R: tokio::io::AsyncBufRead + Unpin,

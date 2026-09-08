@@ -61,6 +61,7 @@ if (command === '--version') {
   if (!args.includes('--chat-id')) {
     const outgoing = read('sent.jsonl').find((record) => record.id === since + 1);
     assert(outgoing, 'sent-row resolution must use the actual receipt');
+    if (control().mode === 'slow_receipt') await new Promise((resolve) => setTimeout(resolve, 2000));
     write(outgoing);
     setInterval(() => {}, 1000);
   } else if (control().mode === 'watch_eof') {

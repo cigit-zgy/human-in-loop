@@ -2,6 +2,72 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Informational status supplied by the caller; delivery never changes this verdict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum NotificationStatus {
+    Pass,
+    PassWithLimitations,
+    Blocked,
+    Fail,
+}
+
+impl NotificationStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pass => "PASS",
+            Self::PassWithLimitations => "PASS_WITH_LIMITATIONS",
+            Self::Blocked => "BLOCKED",
+            Self::Fail => "FAIL",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NotificationField {
+    pub label: String,
+    pub value: String,
+}
+
+/// A one-way notification. It has no choices, deadline, coordinator or reply correlation state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HumanNotification {
+    pub notification_id: String,
+    pub project: String,
+    pub source_agent: String,
+    pub status: NotificationStatus,
+    pub summary: String,
+    pub context: Vec<NotificationField>,
+    pub task_id: Option<String>,
+    pub locator: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum NotificationDeliveryStatus {
+    Sent,
+    Partial,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum NotificationChannel {
+    Feishu,
+    Imessage,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NotificationResult {
+    pub notification_id: String,
+    pub delivery_status: NotificationDeliveryStatus,
+    /// Participating maintained channel types, including a participating channel that failed.
+    pub channel_ids: Vec<NotificationChannel>,
+}
+
 /// 标题来源名的默认值（环境变量未设置或为空时使用）。
 pub const DEFAULT_SOURCE_NAME: &str = "the Loop";
 /// Custom caller name used by Popup and ordinary IM Message / Question titles.

@@ -423,6 +423,8 @@ pub enum ClientMsg {
     /// Hidden PermissionRequest hook submits a structured confirmation.
     /// Boxed: the task (with optional permission memory) dwarfs the other variants.
     SubmitConfirm(Box<ConfirmTask>),
+    /// One-way informational delivery; never enters the confirmation registry.
+    NotifyHuman(Box<crate::models::HumanNotification>),
     /// GUI Helper 握手：出示 Daemon 下发的一次性 token。
     GuiHello { token: String },
     /// 预热 GUI Helper 握手（方案6）：由 daemon 以 `--popup --warm` 拉起的进程在建好隐藏窗 + 挂载前端后
@@ -663,6 +665,9 @@ pub enum ServerMsg {
     /// A human decision won the structured confirmation race.
     ConfirmFinal {
         result: ConfirmResult,
+    },
+    NotificationDispatched {
+        result: crate::models::NotificationResult,
     },
     /// No human decision was produced; caller must return to its native approval flow.
     ConfirmFallback {

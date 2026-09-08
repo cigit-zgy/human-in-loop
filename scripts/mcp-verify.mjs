@@ -1,20 +1,22 @@
 #!/usr/bin/env node
 // Actual stdio MCP client → installed binary → production daemon/coordinator → synthetic imsg.
-// Usage: node scripts/mcp-verify.mjs /absolute/path/to/installed/AskHuman
+// Usage: node scripts/mcp-verify.mjs /absolute/path/to/installed/AskHuman /absolute/task/scratch
 // No test path can reach the real imsg executable or the user's channel configuration.
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
-import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
+import { Client } from './mcp-client.mjs';
 
 const repo = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const binary = fs.realpathSync(process.argv[2] ?? '');
-const scratch = path.join(repo, 'tmp', 'HUMAN_IN_LOOP_MCP_05');
+assert(process.argv[2] && process.argv[3], 'Provide the production binary and task scratch directory');
+assert(path.isAbsolute(process.argv[2]) && path.isAbsolute(process.argv[3]), 'Use absolute binary and scratch paths');
+const binary = fs.realpathSync(process.argv[2]);
+const scratch = process.argv[3];
 fs.mkdirSync(scratch, { recursive: true });
-const root = fs.mkdtempSync(path.join(scratch, 'protocol-'));
+const root = fs.mkdtempSync(path.join(scratch, 'p-'));
 const configDir = path.join(root, 'c');
 const binDir = path.join(root, 'bin');
 const tempDir = path.join(root, 'temp');
@@ -65,66 +67,28 @@ async function quiescent() {
   assert.equal((await status()).activeRequests, 0);
   assert.deepEqual(liveFakePids(), []);
 }
-class Client {
-  constructor() {
-    this.child = spawn(binary, ['mcp'], { cwd: root, env, stdio: ['pipe', 'pipe', 'pipe'] });
-    this.pending = new Map();
-    this.responses = [];
-    this.stderr = '';
-    this.nextId = 0;
-    this.closed = new Promise((resolve) => this.child.once('exit', (code, signal) => resolve({ code, signal })));
-    this.child.stderr.on('data', (chunk) => { this.stderr += chunk; });
-    readline.createInterface({ input: this.child.stdout }).on('line', (line) => {
-      let message;
-      try { message = JSON.parse(line); } catch {
-        for (const resolve of this.pending.values()) resolve({ error: { message: 'Non-protocol stdout' } });
-        this.pending.clear();
-        return;
-      }
-      this.responses.push(message);
-      const pending = this.pending.get(message.id);
-      if (pending) { this.pending.delete(message.id); pending(message); }
-    });
-    this.child.stdin.on('error', () => {});
-  }
-  send(message) { this.child.stdin.write(`${JSON.stringify(message)}\n`); }
-  request(method, params) {
-    const id = ++this.nextId;
-    const promise = new Promise((resolve) => this.pending.set(id, resolve));
-    this.send({ jsonrpc: '2.0', id, method, ...(params === undefined ? {} : { params }) });
-    return { id, promise };
-  }
-  async response(request, ms = 10000) {
-    let timer;
-    try { return await Promise.race([request.promise, new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new Error('MCP response timeout')), ms);
-    })]); } finally { clearTimeout(timer); }
-  }
-  async initialize() {
-    const response = await this.response(this.request('initialize', {
-      protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'human-in-loop-release-verifier', version: '1' },
-    }));
-    assert.equal(response.result.protocolVersion, '2025-11-25');
-    assert.equal(response.result.serverInfo.name, 'human-in-loop');
-    assert.equal(typeof response.result.capabilities.tools, 'object');
-    this.send({ jsonrpc: '2.0', method: 'notifications/initialized' });
-  }
-  ask(arguments_) { return this.request('tools/call', { name: 'ask_human', arguments: arguments_ }); }
-  cancel(id) { this.send({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: id, reason: 'verification cancellation' } }); }
-  async close(signal) {
-    if (signal) this.child.kill(signal); else this.child.stdin.end();
-    await until(() => this.child.exitCode !== null || this.child.signalCode !== null, 'MCP server termination');
-    return this.closed;
-  }
-}
 const base = (requestId, count = 2) => ({ repository_path: repo, source_agent: 'Codex', question: 'Synthetic MCP confirmation?',
   choices: Array.from({ length: count }, (_, index) => ({ id: index ? `other_${index}` : 'received_correctly', label: index ? `Other ${index}` : 'Received correctly' })),
   request_id: requestId });
+const notification = (notificationId, status = 'PASS') => ({ repository_path: repo, source_agent: 'Codex', status,
+  summary: 'Synthetic terminal verification 完成', task_id: 'SYNTHETIC-VERIFICATION',
+  context: [{ label: 'Checks', value: 'Passed' }], locator: 'reports/codex/synthetic.md', notification_id: notificationId });
 const rejected = (response) => Boolean(response.error || response.result?.isError);
 const result = (response, requestId, selected = 'received_correctly') => {
   assert(!rejected(response), 'expected canonical result');
   assert.deepEqual(response.result.structuredContent, { request_id: requestId, selected_choice_id: selected, source_channel_id: 'imessage' });
   assert.deepEqual(JSON.parse(response.result.content[0].text), response.result.structuredContent);
+};
+const notificationResult = (response, notificationId, deliveryStatus = 'SENT') => {
+  assert(!rejected(response), 'expected bounded notification dispatch result');
+  const value = response.result.structuredContent;
+  assert.deepEqual(Object.keys(value).sort(), ['channel_ids', 'delivery_status', 'notification_id']);
+  assert.equal(typeof value.notification_id, 'string');
+  assert(value.notification_id.length > 0);
+  if (notificationId !== undefined) assert.equal(value.notification_id, notificationId);
+  assert.equal(value.delivery_status, deliveryStatus);
+  assert.deepEqual(value.channel_ids, ['imessage']);
+  assert.deepEqual(JSON.parse(response.result.content[0].text), value);
 };
 async function waiting(client, args) {
   const count = ready().length;
@@ -142,26 +106,41 @@ function reply(pending, overrides = {}) {
 }
 function emit(...records) { fs.appendFileSync(path.join(root, 'replies.jsonl'), `${records.map(JSON.stringify).join('\n')}\n`); }
 const clients = [];
+const daemons = [];
 let daemon;
 let passed = false;
 let summary;
+async function startDaemon() {
+  daemon = spawn(binary, ['daemon', 'run'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  daemons.push(daemon);
+  daemon.stdout.resume(); daemon.stderr.resume();
+  await until(async () => { try { return (await status()).pid === daemon.pid; } catch { return false; } }, 'production daemon ready');
+}
 try {
   setMode('wait');
-  daemon = spawn(binary, ['daemon', 'run'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
-  daemon.stdout.resume(); daemon.stderr.resume();
-  await until(async () => { try { return Boolean(await status()); } catch { return false; } }, 'production daemon ready');
-  const client = new Client(); clients.push(client);
+  await startDaemon();
+  const client = new Client({ binary, cwd: root, env }); clients.push(client);
   await client.initialize();
   const list = (await client.response(client.request('tools/list'))).result;
-  assert.deepEqual(list.tools.map((tool) => tool.name), ['ask_human']);
-  const schema = list.tools[0].inputSchema;
+  assert.deepEqual(list.tools.map((tool) => tool.name).sort(), ['ask_human', 'notify_human']);
+  const askTool = list.tools.find((tool) => tool.name === 'ask_human');
+  const notifyTool = list.tools.find((tool) => tool.name === 'notify_human');
+  const schema = askTool.inputSchema;
   assert.deepEqual(Object.keys(schema.properties).sort(), ['choices', 'context', 'question', 'recommended_choice', 'repository_path', 'request_id', 'source_agent']);
   assert.deepEqual(schema.required.toSorted(), ['choices', 'question', 'source_agent']);
   assert.equal(schema.properties.choices.minItems, 2);
   assert.equal(schema.properties.choices.maxItems, 6);
   assert.equal(schema.additionalProperties, false);
-  assert.deepEqual(Object.keys(list.tools[0].outputSchema.properties).sort(), ['request_id', 'selected_choice_id', 'source_channel_id']);
-  check('initialize, protocol negotiation, exact public tool and input/output schemas');
+  assert.deepEqual(Object.keys(askTool.outputSchema.properties).sort(), ['request_id', 'selected_choice_id', 'source_channel_id']);
+  const notifySchema = notifyTool.inputSchema;
+  assert.deepEqual(Object.keys(notifySchema.properties).sort(), ['context', 'locator', 'notification_id', 'repository_path', 'source_agent', 'status', 'summary', 'task_id']);
+  assert.deepEqual(notifySchema.required.toSorted(), ['source_agent', 'status', 'summary']);
+  assert.equal(notifySchema.additionalProperties, false);
+  const statusSchema = notifySchema.properties.status;
+  const statusType = statusSchema.$ref ? notifySchema.$defs[statusSchema.$ref.split('/').at(-1)] : statusSchema;
+  assert.deepEqual(statusType.enum.toSorted(), ['BLOCKED', 'FAIL', 'PASS', 'PASS_WITH_LIMITATIONS']);
+  assert.deepEqual(Object.keys(notifyTool.outputSchema.properties).sort(), ['channel_ids', 'delivery_status', 'notification_id']);
+  check('initialize, protocol negotiation, exactly two public tools and closed input schemas');
 
   const invalid = [
     null, {}, { ...base('missing-source'), source_agent: undefined }, { ...base('missing-question'), question: undefined },
@@ -178,10 +157,26 @@ try {
     { ...base('unknown-choice-field'), choices: [{ id: 'first', label: 'First', command: 'forbidden' }, { id: 'next', label: 'Second' }] },
   ];
   for (const input of invalid) assert(rejected(await client.response(client.ask(input))), 'invalid MCP payload was accepted');
+  const invalidNotifications = [
+    null, {},
+    ...['source_agent', 'status', 'summary'].map((field) => ({ ...notification(`missing-${field}`), [field]: undefined })),
+    ...['source_agent', 'summary', 'task_id', 'locator', 'notification_id', 'repository_path'].map((field) => ({ ...notification(`empty-${field}`), [field]: ' ' })),
+    ...['source_agent', 'summary', 'task_id', 'locator', 'notification_id'].map((field) => ({ ...notification(`long-${field}`), [field]: 'x'.repeat(10000) })),
+    ...['', 'pass', 'ACK', 'UNKNOWN'].map((status) => notification('invalid-status', status)),
+    ...['https://user:secret@example.invalid/report', 'https:user:secret@example.invalid/report', 'javascript:alert(1)', 'data:text/plain,private', 'file:/private/report'].map((locator) => ({ ...notification('unsafe-locator'), locator })),
+    { ...notification('missing-path'), repository_path: path.join(root, 'does-not-exist') },
+    { ...notification('not-repository'), repository_path: '/' },
+    ...['choices', 'recipient', 'chat_id', 'credential', 'command', 'files', 'arbitrary'].map((field) => ({ ...notification(`private-${field}`), [field]: 'forbidden' })),
+    { ...notification('context-type'), context: 'arbitrary text' },
+    { ...notification('context-empty-label'), context: [{ label: ' ', value: 'Value' }] },
+    { ...notification('context-empty-value'), context: [{ label: 'Label', value: ' ' }] },
+    { ...notification('context-unknown-field'), context: [{ label: 'Label', value: 'Value', command: 'forbidden' }] },
+  ];
+  for (const input of invalidNotifications) assert(rejected(await client.response(client.notify(input))), 'invalid notification payload was accepted');
   assert.equal(sends(), 0);
   assert(rejected(await client.response(client.request('tools/call', { name: 'shell', arguments: {} }))));
   assert((await client.response(client.request('unknown/method'))).error);
-  check('malformed/missing/boundary/unknown-field payloads rejected before any channel send', { rejected_payloads: invalid.length, application_sends: 0 });
+  check('malformed/missing/boundary/unknown-field payloads rejected before any channel send', { rejected_payloads: invalid.length + invalidNotifications.length, application_sends: 0 });
 
   client.child.stdin.write('{malformed JSON\n');
   client.send({ jsonrpc: '2.0', id: 'malformed-request', params: {} });
@@ -282,7 +277,7 @@ try {
   check('concurrent tokens isolated; cancel/reply A cannot resolve B; competing candidates win once', { requests: 2, duplicate_ids_rejected: 1, application_sends: 2, canonical_results: 1 });
 
   for (const signal of [undefined, 'SIGTERM']) {
-    const pendingClient = new Client(); clients.push(pendingClient);
+    const pendingClient = new Client({ binary, cwd: root, env }); clients.push(pendingClient);
     await pendingClient.initialize();
     await waiting(pendingClient, base(`disconnect-${signal ?? 'eof'}-a`));
     await waiting(pendingClient, base(`disconnect-${signal ?? 'eof'}-b`));
@@ -290,15 +285,132 @@ try {
     await quiescent();
   }
   check('stdio EOF and process termination clean all owned concurrent pending requests/watchers', { requests: 4, application_sends: 4, canonical_results: 0 });
+
+  for (const terminalStatus of ['PASS', 'PASS_WITH_LIMITATIONS', 'BLOCKED', 'FAIL']) {
+    const args = notification(terminalStatus === 'FAIL' ? undefined : `notify-${terminalStatus}`, terminalStatus);
+    const before = sends();
+    const watcherCount = ready().length;
+    const repliesBefore = lines('replies.jsonl').length;
+    setMode('slow_send');
+    const request = client.notify(args);
+    await until(() => sends() === before + 1, 'notification dispatch started');
+    assert.equal((await status()).activeRequests, 0, 'notification must not create a pending decision during dispatch');
+    notificationResult(await client.response(request), args.notification_id);
+    await quiescent();
+    const rendered = lines('sent.jsonl').at(-1).text;
+    for (const value of [terminalStatus, 'Codex', 'human-in-loop', args.summary, args.task_id, args.locator, 'Checks: Passed']) {
+      assert(rendered.includes(value), 'notification must preserve compact status, identity, summary, task, locator, and context');
+    }
+    assert.equal(ready().length, watcherCount, 'notification must not start a decision reply watcher');
+    assert.equal(lines('replies.jsonl').length, repliesBefore, 'notification completes without synthetic acknowledgement');
+    assert.equal(sends(), before + 1);
+    assert.equal(client.responses.filter((row) => row.id === request.id).length, 1);
+  }
+  check('all terminal statuses preserve compact fields and return without pending decision or acknowledgement', { notifications: 4, application_sends: 4 });
+
+  setMode('wait');
+  const standalone = { source_agent: 'Codex', status: 'PASS', summary: 'Synthetic non-repository terminal notification' };
+  notificationResult(await client.response(client.notify(standalone)));
+  await quiescent();
+  check('non-repository notification and generated notification id', { notifications: 1, application_sends: 1 });
+
+  setMode('send_fail');
+  const beforeFailedNotification = sends();
+  notificationResult(await client.response(client.notify(notification('notify-send-fail'))), 'notify-send-fail', 'FAILED');
+  await quiescent();
+  await pause(250);
+  assert.equal(sends(), beforeFailedNotification + 1, 'uncertain notification mutation must not retry');
+  check('notification transport failure returns bounded FAILED status without decision or retry', { notifications: 1, application_sends: 1 });
+
+  for (const mode of ['slow_version', 'slow_send']) {
+    setMode(mode);
+    const before = sends();
+    const eventsBefore = lines('events.jsonl').length;
+    const request = client.notify(notification(`notify-cancel-${mode}`));
+    await until(() => lines('events.jsonl').slice(eventsBefore).some((event) => mode === 'slow_send'
+      ? event.kind === 'send' : event.command === '--version' && event.kind === 'spawn'), 'notification finite child started');
+    assert.equal((await status()).activeRequests, 0);
+    client.cancel(request.id);
+    await quiescent();
+    await pause(2100);
+    assert.equal(sends(), before + Number(mode === 'slow_send'), 'cancelled notification must not send later or retry');
+    assert(!client.responses.some((row) => row.id === request.id && row.result?.structuredContent?.delivery_status === 'SENT'));
+  }
+  check('notification cancellation reaps preparation/send child without a delayed send or retry', { notifications: 2, application_sends: 1 });
+
+  for (const signal of [undefined, 'SIGTERM']) {
+    setMode('slow_send');
+    const pendingClient = new Client({ binary, cwd: root, env }); clients.push(pendingClient);
+    await pendingClient.initialize();
+    const before = sends();
+    pendingClient.notify(notification(`notify-disconnect-${signal ?? 'eof'}`));
+    await until(() => sends() === before + 1, 'notification send child started');
+    assert.equal((await status()).activeRequests, 0);
+    await pendingClient.close(signal);
+    await quiescent();
+    await pause(2100);
+    assert.equal(sends(), before + 1);
+  }
+  check('notification stdio EOF and termination reap finite transport processes', { notifications: 2, application_sends: 2 });
+
+  let forcedStopResults = 0;
+  for (const force of [false, true]) {
+    for (const mode of ['slow_version', 'slow_send', 'slow_receipt']) {
+      setMode(mode);
+      const before = sends();
+      const recordsBefore = lines('sent.jsonl').length;
+      const eventsBefore = lines('events.jsonl').length;
+      const notificationId = `notify-daemon-${force ? 'forced' : 'graceful'}-${mode}`;
+      const request = client.notify(notification(notificationId));
+      await until(() => lines('events.jsonl').slice(eventsBefore).some((event) => {
+        if (mode === 'slow_send') return event.kind === 'send';
+        if (mode === 'slow_receipt') return event.kind === 'spawn' && event.command === 'watch' && !event.scoped;
+        return event.kind === 'spawn' && event.command === '--version';
+      }), 'notification transport stage started before daemon stop');
+      assert.equal((await status()).activeRequests, 0);
+      const stopped = spawnSync(binary, ['daemon', 'stop', ...(force ? ['--force'] : [])], { cwd: root, env, stdio: 'ignore', timeout: 10000 });
+      assert.equal(stopped.status, 0, 'daemon stop command must complete');
+      const response = await client.response(request);
+      if (force) {
+        if (!rejected(response)) {
+          notificationResult(response, notificationId, 'FAILED');
+          forcedStopResults += 1;
+        }
+      } else {
+        notificationResult(response, notificationId);
+      }
+      await until(() => !alive(daemon.pid), 'daemon stopped');
+      assert.deepEqual(liveFakePids(), [], 'daemon must reap owned transport processes before exit');
+      const expectedSends = before + Number(!force || mode !== 'slow_version');
+      assert.equal(sends(), expectedSends);
+      assert.equal(lines('sent.jsonl').length, recordsBefore + Number(!force || mode === 'slow_receipt'));
+      await pause(2100);
+      assert.equal(sends(), expectedSends, 'stopped daemon must not cause a delayed send or retry');
+      assert.deepEqual(liveFakePids(), []);
+      assert.equal(client.responses.filter((row) => row.id === request.id).length, 1, 'daemon stop must resolve the MCP call once');
+      setMode('wait');
+      await startDaemon();
+      await quiescent();
+    }
+  }
+  check('daemon graceful drain and forced stop finish MCP calls and reap preparation/send/receipt processes', { notifications: 6, application_sends: 5, graceful_completions: 3, forced_failures: 3 });
+
   await client.close();
   await quiescent();
   assert(clients.every((item) => !alive(item.child.pid)));
+  const publicOutput = clients.map((item) => `${JSON.stringify(item.responses)}\n${item.stderr}`).join('\n');
+  for (const privateValue of ['synthetic@example.invalid', 'synthetic-direct-chat', 'synthetic may_have_completed']) {
+    assert(!publicOutput.includes(privateValue), 'private transport data leaked into MCP output or logs');
+  }
   check('all MCP clients/servers terminated; repeat registry/process cleanup check');
+  const structuredResults = clients.flatMap((item) => item.responses).flatMap((response) => response.result?.structuredContent ?? []);
   summary = { verdict: 'PASS', checks, synthetic: true, real_message_sends: 0,
-    synthetic_application_sends: sends(), canonical_results: clients.flatMap((item) => item.responses).filter((response) => response.result?.structuredContent).length,
+    synthetic_application_sends: sends(), canonical_results: structuredResults.filter((value) => value.selected_choice_id).length,
+    notification_results: structuredResults.filter((value) => value.delivery_status).length,
     active_requests: (await status()).activeRequests, synthetic_processes_alive: liveFakePids().length };
-  assert.equal(summary.synthetic_application_sends, 15);
+  assert.equal(summary.synthetic_application_sends, 29);
   assert.equal(summary.canonical_results, 6);
+  assert.equal(summary.notification_results, 9 + forcedStopResults);
   passed = true;
 } finally {
   for (const client of clients) if (alive(client.child.pid)) client.child.kill('SIGKILL');
@@ -309,7 +421,7 @@ try {
   for (const pid of liveFakePids()) { try { process.kill(pid, 'SIGKILL'); } catch {} }
   await until(() => liveFakePids().length === 0 && (!daemon || !alive(daemon.pid)), 'owned process cleanup');
   if (passed) {
-    summary.daemon_and_mcp_cleanup = clients.every((client) => !alive(client.child.pid));
+    summary.daemon_and_mcp_cleanup = clients.every((client) => !alive(client.child.pid)) && daemons.every((item) => !alive(item.pid));
     assert(summary.daemon_and_mcp_cleanup);
     fs.writeFileSync(path.join(root, 'result.json'), JSON.stringify(summary, null, 2));
     console.log(JSON.stringify({ verdict: 'PASS', checks: checks.length, synthetic_application_sends: sends(), real_message_sends: 0 }));

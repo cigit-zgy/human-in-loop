@@ -1,4 +1,4 @@
-//! Local STDIO MCP server exposing only the bounded `ask_human` mutation.
+//! Local STDIO MCP server exposing blocking `ask_human` and one-way `notify_human`.
 //!
 //! The handler submits the existing structured `ConfirmTask` IPC request and therefore reuses the
 //! daemon's canonical coordinator and configured Feishu/iMessage sessions. The input stream is

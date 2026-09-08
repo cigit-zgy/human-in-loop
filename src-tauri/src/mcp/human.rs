@@ -4,7 +4,8 @@ use crate::confirm::ActionRole;
 use crate::ipc::{ConfirmTask, ConfirmTaskOrigin};
 use crate::models::{
     ConfirmChoice, ConfirmDetail, ConfirmField, ConfirmFieldKind, ConfirmPresentation,
-    ConfirmResult, ConfirmSpec,
+    ConfirmResult, ConfirmSpec, HumanNotification, NotificationField, NotificationResult,
+    NotificationStatus,
 };
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
@@ -38,6 +39,48 @@ pub struct AskHumanChoice {
     pub id: String,
     /// Compact human-visible label.
     pub label: String,
+}
+
+#[cfg(test)]
+type TestNotifier = Arc<
+    dyn Fn(
+            HumanNotification,
+            CancellationToken,
+        ) -> Pin<
+            Box<
+                dyn Future<
+                        Output = Result<NotificationResult, crate::client::NotificationClientError>,
+                    > + Send,
+            >,
+        > + Send
+        + Sync,
+>;
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NotifyHumanParams {
+    /// Local path inside the associated GitHub repository. Omit only for non-repository work.
+    #[serde(default)]
+    pub repository_path: Option<String>,
+    /// Short identity of the calling agent/source.
+    pub source_agent: String,
+    /// Established task verdict, independent of notification delivery.
+    pub status: NotificationStatus,
+    /// Compact summary (at most 160 Unicode characters).
+    pub summary: String,
+    /// At most two compact label/value fields; each rendered line is at most 80 characters.
+    #[serde(default)]
+    #[schemars(length(max = 2))]
+    pub context: Vec<NotificationField>,
+    /// Optional durable task identity (at most 128 characters).
+    #[serde(default)]
+    pub task_id: Option<String>,
+    /// Safe evidence URL, path or branch/commit locator (at most 240 characters); never opened.
+    #[serde(default)]
+    pub locator: Option<String>,
+    /// Optional notification identity (at most 128 characters). Generated when omitted.
+    #[serde(default)]
+    pub notification_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -78,6 +121,8 @@ pub struct AskHumanServer {
     shutdown: CancellationToken,
     #[cfg(test)]
     submitter: Option<TestSubmitter>,
+    #[cfg(test)]
+    notifier: Option<TestNotifier>,
 }
 
 #[tool_router(router = tool_router)]
@@ -88,6 +133,8 @@ impl AskHumanServer {
             shutdown: CancellationToken::new(),
             #[cfg(test)]
             submitter: None,
+            #[cfg(test)]
+            notifier: None,
         }
     }
 
@@ -97,6 +144,7 @@ impl AskHumanServer {
             tool_router: Self::tool_router(),
             shutdown: CancellationToken::new(),
             submitter: Some(submitter),
+            notifier: None,
         }
     }
 
@@ -143,6 +191,48 @@ impl AskHumanServer {
         let result = result.map_err(|error| McpError::internal_error(error.to_string(), None))?;
         Ok(Json(map_result(&request_id, result)))
     }
+
+    #[tool(
+        name = "notify_human",
+        description = "Send a compact informational task notification through configured Human in Loop channels. Returns after bounded dispatch, creates no pending decision and never waits for a reply. Repository-associated notifications require repository_path. Delivery status is SENT, PARTIAL or FAILED and does not change the supplied task verdict.",
+        annotations(destructive_hint = false, open_world_hint = true)
+    )]
+    async fn notify_human(
+        &self,
+        Parameters(params): Parameters<NotifyHumanParams>,
+        cancel: CancellationToken,
+    ) -> Result<Json<NotificationResult>, McpError> {
+        let notification = build_notification(params)
+            .map_err(|message| McpError::invalid_params(message, None))?;
+        let dispatch_cancel = CancellationToken::new();
+        #[cfg(test)]
+        let dispatch = async {
+            match &self.notifier {
+                Some(notifier) => notifier(notification, dispatch_cancel.clone()).await,
+                None => {
+                    crate::client::run_notification_async(notification, dispatch_cancel.clone())
+                        .await
+                }
+            }
+        };
+        #[cfg(not(test))]
+        let dispatch = crate::client::run_notification_async(notification, dispatch_cancel.clone());
+        tokio::pin!(dispatch);
+        let result = tokio::select! {
+            result = &mut dispatch => result,
+            _ = cancel.cancelled() => {
+                dispatch_cancel.cancel();
+                dispatch.await
+            }
+            _ = self.shutdown.cancelled() => {
+                dispatch_cancel.cancel();
+                dispatch.await
+            }
+        };
+        result
+            .map(Json)
+            .map_err(|error| McpError::internal_error(error.to_string(), None))
+    }
 }
 
 #[tool_handler(router = self.tool_router)]
@@ -150,7 +240,7 @@ impl ServerHandler for AskHumanServer {
     fn get_info(&self) -> ServerInfo {
         let mut info = ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_instructions(
-                "Human in Loop exposes one blocking mutation tool: `ask_human`. It returns a stable canonical choice id and never accepts transport credentials or recipient identity.",
+                "Human in Loop exposes ask_human for one blocking correlated choice and notify_human for bounded informational dispatch without a reply. Neither accepts transport credentials or recipient identity.",
             );
         let mut implementation = Implementation::from_build_env();
         implementation.name = "human-in-loop".to_string();
@@ -198,30 +288,7 @@ fn build_confirm_task(params: AskHumanParams) -> Result<ConfirmTask, String> {
         return Err("recommended_choice must reference a choice id".to_string());
     }
 
-    let project = match params.repository_path.as_deref() {
-        Some(raw) if raw.trim().is_empty() => {
-            return Err("repository_path must not be empty".to_string())
-        }
-        Some(raw) => {
-            let path = Path::new(raw)
-                .canonicalize()
-                .map_err(|_| "repository_path must identify an existing directory".to_string())?;
-            if !path.is_dir() {
-                return Err("repository_path must identify an existing directory".to_string());
-            }
-            let project = crate::project::detect_from(&path);
-            match crate::project::repository_identity(&project) {
-                crate::project::RepositoryIdentity::Github(_) => project,
-                crate::project::RepositoryIdentity::NonRepository => {
-                    return Err("repository_path must identify a GitHub repository".to_string())
-                }
-                crate::project::RepositoryIdentity::Unavailable => {
-                    return Err("canonical GitHub repository identity is unavailable".to_string())
-                }
-            }
-        }
-        None => String::new(),
-    };
+    let project = resolve_project(params.repository_path.as_deref())?;
     let context = params
         .context
         .map(|value| required_compact(&value, "context"))
@@ -271,6 +338,53 @@ fn build_confirm_task(params: AskHumanParams) -> Result<ConfirmTask, String> {
     };
     task.spec.validate()?;
     Ok(task)
+}
+
+fn resolve_project(repository_path: Option<&str>) -> Result<String, String> {
+    Ok(match repository_path {
+        Some(raw) if raw.trim().is_empty() => {
+            return Err("repository_path must not be empty".to_string())
+        }
+        Some(raw) => {
+            let path = Path::new(raw)
+                .canonicalize()
+                .map_err(|_| "repository_path must identify an existing directory".to_string())?;
+            if !path.is_dir() {
+                return Err("repository_path must identify an existing directory".to_string());
+            }
+            let project = crate::project::detect_from(&path);
+            match crate::project::repository_identity(&project) {
+                crate::project::RepositoryIdentity::Github(_) => project,
+                crate::project::RepositoryIdentity::NonRepository => {
+                    return Err("repository_path must identify a GitHub repository".to_string())
+                }
+                crate::project::RepositoryIdentity::Unavailable => {
+                    return Err("canonical GitHub repository identity is unavailable".to_string())
+                }
+            }
+        }
+        None => String::new(),
+    })
+}
+
+fn build_notification(params: NotifyHumanParams) -> Result<HumanNotification, String> {
+    use crate::channels::notify;
+    let notification = HumanNotification {
+        notification_id: params
+            .notification_id
+            .map(|id| notify::identifier(&id, "notification_id"))
+            .transpose()?
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+        project: resolve_project(params.repository_path.as_deref())?,
+        source_agent: params.source_agent,
+        status: params.status,
+        summary: params.summary,
+        context: params.context,
+        task_id: params.task_id,
+        locator: params.locator,
+    };
+    notify::render(&notification)?;
+    Ok(notification)
 }
 
 fn required_compact(value: &str, field: &str) -> Result<String, String> {
@@ -402,9 +516,18 @@ mod tests {
         tokio::io::WriteHalf<tokio::io::DuplexStream>,
         tokio::task::JoinHandle<()>,
     ) {
+        protocol_with_server(AskHumanServer::with_submitter(submitter)).await
+    }
+
+    async fn protocol_with_server(
+        server: AskHumanServer,
+    ) -> (
+        BufReader<tokio::io::ReadHalf<tokio::io::DuplexStream>>,
+        tokio::io::WriteHalf<tokio::io::DuplexStream>,
+        tokio::task::JoinHandle<()>,
+    ) {
         let (server_transport, client_transport) = tokio::io::duplex(64 * 1024);
         let server_task = tokio::spawn(async move {
-            let server = AskHumanServer::with_submitter(submitter);
             let shutdown = server.shutdown_token();
             let (read, write) = tokio::io::split(server_transport);
             server
@@ -424,6 +547,184 @@ mod tests {
     fn call(id: i64, arguments: serde_json::Value) -> serde_json::Value {
         json!({ "jsonrpc": "2.0", "id": id, "method": "tools/call",
             "params": { "name": "ask_human", "arguments": arguments } })
+    }
+
+    fn notification_arguments() -> serde_json::Value {
+        json!({
+            "source_agent": "Codex", "status": "PASS", "summary": "Verification complete.",
+            "task_id": "TASK-1", "locator": "reports/codex/result.md", "notification_id": "notice-1",
+            "context": [{"label": "Scope", "value": "Local"}]
+        })
+    }
+
+    fn notification_call(id: i64, arguments: serde_json::Value) -> serde_json::Value {
+        json!({"jsonrpc": "2.0", "id": id, "method": "tools/call", "params": {"name": "notify_human", "arguments": arguments}})
+    }
+
+    #[tokio::test]
+    async fn notification_protocol_is_closed_validates_fields_and_never_submits_a_decision() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut server = AskHumanServer::with_submitter(Arc::new(|_, _| {
+            panic!("notification created a confirmation")
+        }));
+        server.notifier = Some({
+            let calls = calls.clone();
+            Arc::new(move |notice, _| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                assert_eq!(notice.task_id.as_deref(), Some("TASK-1"));
+                assert_eq!(notice.locator.as_deref(), Some("reports/codex/result.md"));
+                assert_eq!(notice.context[0].value, "Local");
+                Box::pin(async move {
+                    Ok(crate::channels::notify::result(
+                        notice.notification_id,
+                        &[(crate::models::NotificationChannel::Imessage, true)],
+                    ))
+                })
+            })
+        });
+        let (mut reader, mut write, server_task) = protocol_with_server(server).await;
+        send_json(
+            &mut write,
+            json!({"jsonrpc":"2.0", "id":2, "method":"tools/list"}),
+        )
+        .await;
+        let response = read_response(&mut reader, 2).await;
+        let tool = &response["result"]["tools"][1];
+        assert_eq!(tool["name"], "notify_human");
+        let schema = &tool["inputSchema"];
+        assert_eq!(schema["additionalProperties"], false);
+        assert_eq!(
+            schema["$defs"]["NotificationField"]["additionalProperties"],
+            false
+        );
+        let keys = schema["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            keys,
+            [
+                "context",
+                "locator",
+                "notification_id",
+                "repository_path",
+                "source_agent",
+                "status",
+                "summary",
+                "task_id"
+            ]
+        );
+        assert_eq!(tool["outputSchema"]["additionalProperties"], false);
+
+        let mut invalid = vec![json!({}), json!("invalid")];
+        for field in ["source_agent", "status", "summary"] {
+            let mut value = notification_arguments();
+            value.as_object_mut().unwrap().remove(field);
+            invalid.push(value);
+        }
+        for field in [
+            "source_agent",
+            "summary",
+            "notification_id",
+            "task_id",
+            "locator",
+            "repository_path",
+        ] {
+            let mut value = notification_arguments();
+            value[field] = json!("");
+            invalid.push(value);
+        }
+        for (field, value) in [
+            ("status", json!("DONE")),
+            ("choices", json!([{"id":"acknowledge", "label":"OK"}])),
+            ("recipient", json!("private-sentinel")),
+            ("shell", json!("private-sentinel")),
+            ("summary", json!("界".repeat(161))),
+            ("notification_id", json!("x".repeat(129))),
+            (
+                "context",
+                json!([{"label":"Scope", "value":"Local", "recipient":"private-sentinel"}]),
+            ),
+        ] {
+            let mut arguments = notification_arguments();
+            arguments[field] = value;
+            invalid.push(arguments);
+        }
+        for (index, arguments) in invalid.into_iter().enumerate() {
+            let id = 10 + index as i64;
+            send_json(&mut write, notification_call(id, arguments)).await;
+            let response = read_response(&mut reader, id).await;
+            assert!(
+                response.get("error").is_some() || response["result"]["isError"] == true,
+                "{response}"
+            );
+            assert!(!response.to_string().contains("private-sentinel"));
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        for (index, status) in ["PASS", "PASS_WITH_LIMITATIONS", "BLOCKED", "FAIL"]
+            .iter()
+            .enumerate()
+        {
+            let id = 100 + index as i64;
+            let mut arguments = notification_arguments();
+            arguments["status"] = json!(status);
+            send_json(&mut write, notification_call(id, arguments)).await;
+            let response = read_response(&mut reader, id).await;
+            assert_eq!(
+                response["result"]["structuredContent"],
+                json!({"notification_id":"notice-1", "delivery_status":"SENT", "channel_ids":["imessage"]})
+            );
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
+        drop(write);
+        drop(reader);
+        server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn notification_cancellation_and_eof_cancel_inflight_dispatch() {
+        for eof in [false, true] {
+            let started = Arc::new(Notify::new());
+            let cleaned = Arc::new(Notify::new());
+            let mut server = AskHumanServer::new();
+            server.notifier = Some({
+                let started = started.clone();
+                let cleaned = cleaned.clone();
+                Arc::new(move |_, cancel| {
+                    let started = started.clone();
+                    let cleaned = cleaned.clone();
+                    Box::pin(async move {
+                        started.notify_one();
+                        cancel.cancelled().await;
+                        cleaned.notify_one();
+                        Err(crate::client::NotificationClientError::Cancelled)
+                    })
+                })
+            });
+            let (reader, write, server_task) = protocol_with_server(server).await;
+            let mut reader = Some(reader);
+            let mut write = Some(write);
+            send_json(
+                write.as_mut().unwrap(),
+                notification_call(2, notification_arguments()),
+            )
+            .await;
+            started.notified().await;
+            if eof {
+                drop(write.take());
+                drop(reader.take());
+            } else {
+                send_json(write.as_mut().unwrap(), json!({"jsonrpc":"2.0", "method":"notifications/cancelled", "params":{"requestId":2}})).await;
+            }
+            tokio::time::timeout(std::time::Duration::from_secs(2), cleaned.notified())
+                .await
+                .expect("notification dispatch cleanup");
+            drop(write);
+            drop(reader);
+            server_task.await.unwrap();
+        }
     }
 
     #[tokio::test]
@@ -452,8 +753,9 @@ mod tests {
         .await;
         let response = read_response(&mut reader, 2).await;
         let tools = response["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 1);
+        assert_eq!(tools.len(), 2);
         assert_eq!(tools[0]["name"], "ask_human");
+        assert_eq!(tools[1]["name"], "notify_human");
         let schema = &tools[0]["inputSchema"];
         let mut properties = schema["properties"]
             .as_object()
@@ -806,10 +1108,11 @@ mod tests {
     }
 
     #[test]
-    fn discovery_exposes_only_ask_human_and_no_transport_capability() {
+    fn discovery_exposes_only_ask_and_notify_without_transport_capabilities() {
         let tools = AskHumanServer::new().tool_router.list_all();
-        assert_eq!(tools.len(), 1);
+        assert_eq!(tools.len(), 2);
         assert_eq!(tools[0].name, "ask_human");
+        assert_eq!(tools[1].name, "notify_human");
         let schema = serde_json::to_value(&tools[0].input_schema).unwrap();
         let properties = schema["properties"].as_object().unwrap();
         for forbidden in [

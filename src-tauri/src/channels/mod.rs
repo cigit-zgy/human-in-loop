@@ -6,6 +6,7 @@ pub mod dingding;
 pub mod feishu;
 pub mod health;
 pub mod imessage;
+pub mod notify;
 pub mod popup;
 pub mod slack;
 pub mod telegram;
