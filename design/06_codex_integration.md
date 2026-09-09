@@ -183,6 +183,28 @@ Machine-wide discovery must resolve an exact accepted revision; a stale local fo
 
 `$CODEX_HOME/config.toml` registers the production local MCP server only. It does not embed transport credentials or duplicate policy. Existing unrelated Codex configuration is preserved.
 
+Production MCP registration MUST use the same canonical human-in-loop runtime configuration as the interactive CLI and daemon. The managed Codex MCP entry MUST NOT create, select, or preserve a separate product-owned runtime home such as a legacy `human-in-loop-codex` configuration root. In particular, a human-in-loop-managed `HUMAN_IN_LOOP_HOME` override that points to the known legacy isolated MCP home is migration debt and must be removed by install/update migration.
+
+Unknown User-authored custom runtime-home overrides are not automatically owned by human-in-loop. If an installer encounters a custom `HUMAN_IN_LOOP_HOME` value that is not a known managed legacy value, it must preserve it or surface an explicit migration decision rather than silently overwrite it.
+
+The production responsibility split is:
+
+```text
+Skill
+= policy: when to ask_human / notify_human
+
+MCP
+= primary structured invocation surface
+
+canonical human-in-loop config + daemon
+= shared runtime/channel state
+
+CLI
+= supported recovery/debug/fallback surface, not a second production configuration world
+```
+
+MCP and CLI may have different process lifecycles, but they must not diverge into separate human-in-loop configuration universes merely because they are different invocation surfaces.
+
 # Project/task extensions
 
 Projects/tasks add only genuinely domain-specific checkpoints, for example scientific ambiguity, destructive replacement of validated artifacts, login/MFA/CAPTCHA, publication/release authorization, or repository visibility/licensing changes.
@@ -201,5 +223,9 @@ AND already-authorized routine work receives no redundant approval prompts
 AND setup/recovery host mechanics are consolidated rather than repeatedly prompted
 AND SETUP_COMPLETE normal operation requires no recurring password/user-switch/TCC interaction
 AND every normal terminal verdict attempts compact notify_human reporting
+AND Codex MCP uses the same canonical runtime configuration as CLI/daemon
+AND human-in-loop does not maintain a separate product-owned MCP configuration home
+AND unknown User custom runtime-home overrides are not silently destroyed
+AND CLI remains a recovery/debug fallback rather than a competing production configuration owner
 AND MCP registration/policy/project/task concerns remain separate owners
 ```
