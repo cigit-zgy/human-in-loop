@@ -91,7 +91,7 @@ When `ASK_HUMAN_REQUIRED` is true:
 
 ```text
 1. Stop the affected path before the decision side effect.
-2. Construct the smallest canonical structured request preserving safe context.
+2. Construct the smallest canonical structured request preserving all evidence needed for a safe decision.
 3. Call ask_human.
 4. Wait for exactly one valid correlated canonical result.
 5. Continue only from returned stable selected_choice_id.
@@ -114,13 +114,31 @@ A decision request normally includes only what the User needs to choose safely:
 ```text
 repository_path when repository-associated
 source_agent
-short question/action
+concise question/action
+optional multiline detail containing substantive decision evidence
 2–6 stable choices
-compact context
+optional compact context/metadata
 recommended choice only when justified
 ```
 
-Do not include secrets, credentials, raw private transport identifiers, irrelevant logs, or long task/report bodies.
+Use the fields semantically:
+
+```text
+question
+→ concise decision to answer
+
+detail
+→ bounded multiline evidence/body; preserve meaningful line breaks
+
+context
+→ short metadata only, not a substitute for long-form evidence
+```
+
+Do not flatten a substantive multiline review/design/release card into one `context` line merely to satisfy a transport renderer. Do not remove evidence required for a safe scientific, design, security, or publication decision just to make the message shorter.
+
+The normal iMessage decision-body defaults are intentionally generous enough for substantive decisions: approximately 1000 Unicode characters of `detail` and 1500 characters for the fully rendered message. The User may configure a larger operational budget within the product's absolute defensive ceiling. Never silently truncate content. If a payload exceeds the active safe budget, fail closed and surface the typed/redacted payload-size reason.
+
+Do not include secrets, credentials, raw private transport identifiers, irrelevant logs, complete reports, or unbounded document/model dumps.
 
 ## Setup/recovery checkpoint quality
 
@@ -195,6 +213,7 @@ The human-in-loop contract is satisfied for a task when:
 ```text
 all mandatory semantic checkpoints were resolved by correlated ask_human results or caused fail-closed BLOCKED state
 AND already-authorized routine work received no redundant semantic confirmation
+AND substantive evidence was preserved in the proper decision-body surface rather than silently truncated
 AND host setup/recovery mechanics were consolidated instead of repeatedly prompted
 AND normal terminal truth was established honestly
 AND notify_human was attempted
