@@ -4,7 +4,7 @@ Node wrapper for the independent **human-in-loop** project. The maintained
 remote channels are Feishu and Apple Messages with strict iMessage-only
 delivery.
 
-The repository's `v0.1.0` publication is a source release only; it does not
+The repository's `v0.1.1` publication is a source release only; it does not
 publish or promise notarized downloadable binaries or an npm binary release.
 
 For a future npm distribution, the primary command is:
