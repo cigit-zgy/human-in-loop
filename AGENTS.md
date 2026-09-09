@@ -114,6 +114,18 @@ Release readiness additionally requires the onboarding/deployment contract in `d
 
 Once the installation reaches `SETUP_COMPLETE`, normal operation is expected to be unattended. Repeated administrator/Keychain passwords, Fast User Switching, Full Disk Access prompts, Automation prompts, or Files & Folders prompts are defects/recovery states rather than normal workflow.
 
+### Standing release authorization
+
+The User has explicitly authorized routine publication without a separate release-confirmation checkpoint after ChatGPT has accepted the implementation candidate.
+
+```text
+ChatGPT acceptance PASS
++ release gates remain satisfied
+→ integrate / install / qualify / pin / tag / publish directly
+```
+
+Do not call `ask_human` merely to reconfirm merge, tag, version publication, or GitHub Release creation after such acceptance. This standing authorization does not waive a genuinely new material decision involving security/privacy boundary expansion, licensing or repository visibility, destructive history/state change, new external service/credential scope, or another public side effect materially different from the already accepted release plan. Such a new boundary still fails closed to the normal human-decision contract.
+
 ## Human / trust checkpoints
 
 - Carrier messaging is prohibited. Apple Messages is iMessage-only and fails closed if actual iMessage delivery cannot be proven.
