@@ -501,9 +501,7 @@ async fn start_fork_input(
     }
     .is_some();
     if !started {
-        entry
-            .coordinator
-            .fallback(ConfirmFallbackReason::NoAvailableChannel);
+        entry.fallback_no_available_channel();
         let _ = reply_channel_text(channel_id, config, "Fork input channel is unavailable").await;
         return;
     }

@@ -27,10 +27,13 @@ use std::path::{Path, PathBuf};
 
 /// 各家配置中本 server 的名字（恒 `askhuman`，spec D15）。
 pub const SERVER_NAME: &str = "askhuman";
+/// Current product-owned Codex entry name used by the v0.1.0 installer.
+const CODEX_SERVER_NAME: &str = "human-in-loop";
 /// 启动子命令（`AskHuman mcp`）。
 pub const ARG_MCP: &str = "mcp";
 /// Codex Code Mode 中必须由模型顶层直调的 MCP namespace。
 pub const CODEX_DIRECT_ONLY_NAMESPACE: &str = "mcp__askhuman";
+const LEGACY_CODEX_HOME_SUFFIX: &str = ".local/share/human-in-loop-codex";
 /// Codex MCP server 启动超时（秒）。
 pub const CODEX_STARTUP_TIMEOUT_SEC: i64 = 30;
 /// Codex MCP 工具调用超时（秒）：取很大值，等待人类回应不被取消（spec D6）。
@@ -474,13 +477,25 @@ fn apply_install_toml_outcome(
         .and_then(Item::as_table_mut)
         .ok_or_else(|| anyhow!("config.toml 中 `mcp_servers` 不是表，已中止"))?;
 
-    if !servers.contains_key(SERVER_NAME) {
-        servers.insert(SERVER_NAME, Item::Table(Table::new()));
+    if target == AgentTarget::Codex {
+        remove_managed_legacy_codex_home(servers, &paths::home());
+    }
+    let server_name = if target == AgentTarget::Codex {
+        if servers.contains_key(CODEX_SERVER_NAME) {
+            CODEX_SERVER_NAME
+        } else {
+            SERVER_NAME
+        }
+    } else {
+        SERVER_NAME
+    };
+    if !servers.contains_key(server_name) {
+        servers.insert(server_name, Item::Table(Table::new()));
     }
     let entry = servers
-        .get_mut(SERVER_NAME)
+        .get_mut(server_name)
         .and_then(Item::as_table_mut)
-        .ok_or_else(|| anyhow!("config.toml 中 `mcp_servers.askhuman` 不是表，已中止"))?;
+        .ok_or_else(|| anyhow!("config.toml 中 `mcp_servers.{server_name}` 不是表，已中止"))?;
 
     entry.insert("command", value(command));
     let mut args = Array::new();
@@ -516,6 +531,45 @@ fn apply_install_toml_outcome(
     })
 }
 
+fn remove_managed_legacy_codex_home(servers: &mut toml_edit::Table, home: &Path) {
+    use toml_edit::Item;
+    for name in [CODEX_SERVER_NAME, SERVER_NAME] {
+        let Some(entry) = servers.get_mut(name).and_then(Item::as_table_mut) else {
+            continue;
+        };
+        let Some(env) = entry.get_mut("env").and_then(Item::as_table_like_mut) else {
+            continue;
+        };
+        let Some(value) = env.get("HUMAN_IN_LOOP_HOME").and_then(Item::as_str) else {
+            continue;
+        };
+        if is_managed_legacy_codex_home(value, home) {
+            env.remove("HUMAN_IN_LOOP_HOME");
+        }
+    }
+}
+
+fn is_managed_legacy_codex_home(value: &str, home: &Path) -> bool {
+    let literal = value.strip_suffix('/').unwrap_or(value);
+    Path::new(literal) == home.join(LEGACY_CODEX_HOME_SUFFIX)
+        || literal == format!("~/{LEGACY_CODEX_HOME_SUFFIX}")
+        || literal == format!("$HOME/{LEGACY_CODEX_HOME_SUFFIX}")
+        || literal == format!("${{HOME}}/{LEGACY_CODEX_HOME_SUFFIX}")
+}
+
+fn has_managed_legacy_codex_home(servers: &dyn toml_edit::TableLike, home: &Path) -> bool {
+    [CODEX_SERVER_NAME, SERVER_NAME].into_iter().any(|name| {
+        servers
+            .get(name)
+            .and_then(toml_edit::Item::as_table_like)
+            .and_then(|entry| entry.get("env"))
+            .and_then(toml_edit::Item::as_table_like)
+            .and_then(|env| env.get("HUMAN_IN_LOOP_HOME"))
+            .and_then(toml_edit::Item::as_str)
+            .is_some_and(|value| is_managed_legacy_codex_home(value, home))
+    })
+}
+
 /// 移除 `[mcp_servers.askhuman]`；若 `mcp_servers` 因此变空则删除该表。
 /// `remove_codex_direct_only` 只可来自所有权账本的明确 true；移除后保留数组键和父表。
 fn apply_uninstall_toml(text: &str, remove_codex_direct_only: bool) -> Result<String> {
@@ -526,8 +580,9 @@ fn apply_uninstall_toml(text: &str, remove_codex_direct_only: bool) -> Result<St
     let mut doc = text
         .parse::<DocumentMut>()
         .map_err(|e| anyhow!("解析 config.toml 失败，已中止（不覆盖原文件）：{e}"))?;
+    let server_name = toml_server_name(&doc).unwrap_or(SERVER_NAME);
     if let Some(servers) = doc.get_mut("mcp_servers").and_then(Item::as_table_mut) {
-        servers.remove(SERVER_NAME);
+        servers.remove(server_name);
         if servers.is_empty() {
             doc.as_table_mut().remove("mcp_servers");
         }
@@ -644,10 +699,22 @@ fn toml_installed(text: &str) -> bool {
     toml_entry(&doc).is_some()
 }
 
+fn toml_server_name(doc: &toml_edit::DocumentMut) -> Option<&'static str> {
+    let servers = doc.get("mcp_servers")?.as_table_like()?;
+    if servers.get(CODEX_SERVER_NAME).is_some() {
+        Some(CODEX_SERVER_NAME)
+    } else if servers.get(SERVER_NAME).is_some() {
+        Some(SERVER_NAME)
+    } else {
+        None
+    }
+}
+
 fn toml_entry(doc: &toml_edit::DocumentMut) -> Option<&dyn toml_edit::TableLike> {
+    let server_name = toml_server_name(doc)?;
     doc.get("mcp_servers")?
         .as_table_like()?
-        .get(SERVER_NAME)?
+        .get(server_name)?
         .as_table_like()
 }
 
@@ -695,7 +762,12 @@ fn toml_entry_matches(target: AgentTarget, text: &str, command: &str) -> bool {
         None => entry.get("tool_timeouts").is_none(),
     };
     let direct_only_ok = target != AgentTarget::Codex || codex_direct_only_matches(&doc);
-    cmd_ok && args_ok && startup_ok && tool_ok && ask_ok && direct_only_ok
+    let canonical_home_ok = target != AgentTarget::Codex
+        || doc
+            .get("mcp_servers")
+            .and_then(toml_edit::Item::as_table_like)
+            .is_none_or(|servers| !has_managed_legacy_codex_home(servers, &paths::home()));
+    cmd_ok && args_ok && startup_ok && tool_ok && ask_ok && direct_only_ok && canonical_home_ok
 }
 
 // MARK: - 私有 IO / 工具
@@ -918,6 +990,127 @@ mod tests {
     // ── TOML（Codex） ──
     const CODEX: AgentTarget = AgentTarget::Codex;
     const GROK: AgentTarget = AgentTarget::Grok;
+
+    fn codex_product_entry(doc: &toml_edit::DocumentMut) -> &dyn toml_edit::TableLike {
+        toml_entry(doc).expect("human-in-loop MCP entry")
+    }
+
+    fn managed_legacy_home() -> String {
+        paths::home()
+            .join(".local/share/human-in-loop-codex")
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    #[test]
+    fn codex_install_removes_known_managed_legacy_home() {
+        let input = format!(
+            "[mcp_servers.human-in-loop]\ncommand = \"{EXE}\"\nargs = [\"mcp\"]\n\n[mcp_servers.human-in-loop.env]\nHUMAN_IN_LOOP_HOME = {}\n",
+            toml_edit::Value::from(managed_legacy_home())
+        );
+        let out = apply_install_toml(CODEX, &input, EXE).unwrap();
+        let doc = out.parse::<toml_edit::DocumentMut>().unwrap();
+        assert!(codex_product_entry(&doc)
+            .get("env")
+            .and_then(toml_edit::Item::as_table_like)
+            .and_then(|env| env.get("HUMAN_IN_LOOP_HOME"))
+            .is_none());
+    }
+
+    #[test]
+    fn codex_install_removes_managed_home_but_preserves_path() {
+        let input = format!(
+            "[mcp_servers.human-in-loop]\ncommand = \"{EXE}\"\nargs = [\"mcp\"]\n\n[mcp_servers.human-in-loop.env]\nHUMAN_IN_LOOP_HOME = {}\nPATH = \"/usr/bin:/bin\"\n",
+            toml_edit::Value::from(managed_legacy_home())
+        );
+        let out = apply_install_toml(CODEX, &input, EXE).unwrap();
+        let doc = out.parse::<toml_edit::DocumentMut>().unwrap();
+        let env = codex_product_entry(&doc)
+            .get("env")
+            .and_then(toml_edit::Item::as_table_like)
+            .unwrap();
+        assert!(env.get("HUMAN_IN_LOOP_HOME").is_none());
+        assert_eq!(
+            env.get("PATH").and_then(toml_edit::Item::as_str),
+            Some("/usr/bin:/bin")
+        );
+    }
+
+    #[test]
+    fn codex_install_keeps_canonical_entry_without_home_stable() {
+        let input = format!(
+            "# keep\n[mcp_servers.human-in-loop]\ncommand = \"{EXE}\"\nargs = [\"mcp\"]\nstartup_timeout_sec = 30\ntool_timeout_sec = 86400\napproval_mode = \"approve\"\n\n[features.code_mode]\ndirect_only_tool_namespaces = [\"mcp__askhuman\"]\n"
+        );
+        let once = apply_install_toml(CODEX, &input, EXE).unwrap();
+        let twice = apply_install_toml(CODEX, &once, EXE).unwrap();
+        assert_eq!(once, twice);
+        assert_eq!(once.matches("[mcp_servers.").count(), 1);
+        assert!(once.contains("# keep"));
+    }
+
+    #[test]
+    fn codex_install_preserves_unknown_custom_home() {
+        let input = format!(
+            "[mcp_servers.human-in-loop]\ncommand = \"{EXE}\"\nargs = [\"mcp\"]\n\n[mcp_servers.human-in-loop.env]\nHUMAN_IN_LOOP_HOME = \"/srv/user-chosen-hil\"\n"
+        );
+        let out = apply_install_toml(CODEX, &input, EXE).unwrap();
+        let doc = out.parse::<toml_edit::DocumentMut>().unwrap();
+        let custom = codex_product_entry(&doc)
+            .get("env")
+            .and_then(toml_edit::Item::as_table_like)
+            .and_then(|env| env.get("HUMAN_IN_LOOP_HOME"))
+            .and_then(toml_edit::Item::as_str);
+        assert_eq!(custom, Some("/srv/user-chosen-hil"));
+        assert_eq!(out.matches("[mcp_servers.").count(), 2);
+    }
+
+    #[test]
+    fn codex_install_preserves_unrelated_config_and_comments_during_migration() {
+        let input = format!(
+            "# user heading\nmodel = \"kept\"\n\n[mcp_servers.other]\ncommand = \"other\" # user server\n\n[mcp_servers.human-in-loop]\ncommand = \"{EXE}\"\nargs = [\"mcp\"]\n\n[mcp_servers.human-in-loop.env]\nHUMAN_IN_LOOP_HOME = {}\n# user PATH remains\nPATH = \"/usr/bin\"\n",
+            toml_edit::Value::from(managed_legacy_home())
+        );
+        let out = apply_install_toml(CODEX, &input, EXE).unwrap();
+        assert!(out.contains("# user heading"));
+        assert!(out.contains("model = \"kept\""));
+        assert!(out.contains("command = \"other\" # user server"));
+        assert!(out.contains("# user PATH remains"));
+        assert!(out.contains("PATH = \"/usr/bin\""));
+        assert!(!out.contains("human-in-loop-codex"));
+    }
+
+    #[test]
+    fn codex_managed_legacy_migration_is_idempotent() {
+        let input = format!(
+            "[mcp_servers.human-in-loop]\ncommand = \"{EXE}\"\nargs = [\"mcp\"]\n\n[mcp_servers.human-in-loop.env]\nHUMAN_IN_LOOP_HOME = {}\n",
+            toml_edit::Value::from(managed_legacy_home())
+        );
+        let once = apply_install_toml(CODEX, &input, EXE).unwrap();
+        let twice = apply_install_toml(CODEX, &once, EXE).unwrap();
+        assert_eq!(once, twice);
+    }
+
+    #[test]
+    fn codex_update_detects_managed_home_on_secondary_product_entry() {
+        let input = format!(
+            "[mcp_servers.human-in-loop]\ncommand = \"{EXE}\"\nargs = [\"mcp\"]\nstartup_timeout_sec = 30\ntool_timeout_sec = 86400\napproval_mode = \"approve\"\n\n[mcp_servers.askhuman]\ncommand = \"{EXE}\"\nargs = [\"mcp\"]\n\n[mcp_servers.askhuman.env]\nHUMAN_IN_LOOP_HOME = {}\n\n[features.code_mode]\ndirect_only_tool_namespaces = [\"mcp__askhuman\"]\n",
+            toml_edit::Value::from(managed_legacy_home())
+        );
+        assert!(!toml_entry_matches(CODEX, &input, EXE));
+        let out = apply_install_toml(CODEX, &input, EXE).unwrap();
+        assert!(!out.contains("human-in-loop-codex"));
+        assert!(toml_entry_matches(CODEX, &out, EXE));
+    }
+
+    #[test]
+    fn fresh_codex_entry_uses_canonical_config_home() {
+        let out = apply_install_toml(CODEX, "", EXE).unwrap();
+        let doc = out.parse::<toml_edit::DocumentMut>().unwrap();
+        let entry = codex_product_entry(&doc);
+        assert!(entry.get("env").is_none());
+        assert!(!out.contains("HUMAN_IN_LOOP_HOME"));
+        assert!(!out.contains("human-in-loop-codex"));
+    }
 
     #[test]
     fn toml_install_into_empty_creates_table() {

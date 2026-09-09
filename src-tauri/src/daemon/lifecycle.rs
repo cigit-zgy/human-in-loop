@@ -310,6 +310,69 @@ pub fn log_runtime_event(component: &str, action: &str, request_id: Option<&str>
     }
 }
 
+#[derive(Serialize)]
+struct NoAvailableChannelLine {
+    timestamp_ms: u64,
+    pid: u32,
+    event: &'static str,
+    popup: &'static str,
+    feishu: &'static str,
+    imessage: &'static str,
+}
+
+fn no_available_channel_line_at(
+    availability: crate::daemon::request::ConfirmAvailability,
+    timestamp_ms: u64,
+    pid: u32,
+) -> Option<String> {
+    serde_json::to_string(&NoAvailableChannelLine {
+        timestamp_ms,
+        pid,
+        event: "no_available_channel",
+        popup: availability.popup(),
+        feishu: availability.feishu(),
+        imessage: availability.imessage(),
+    })
+    .ok()
+}
+
+/// Append one fail-closed channel-availability diagnostic using fixed, non-secret values only.
+pub fn log_no_available_channel(availability: crate::daemon::request::ConfirmAvailability) {
+    let timestamp_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0);
+    let Some(mut line) =
+        no_available_channel_line_at(availability, timestamp_ms, std::process::id())
+    else {
+        return;
+    };
+    line.push('\n');
+
+    #[cfg(not(test))]
+    {
+        use std::io::Write;
+
+        let path = log_path();
+        let Some(parent) = path.parent() else {
+            return;
+        };
+        if std::fs::create_dir_all(parent).is_err() {
+            return;
+        }
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
+            let _ = file.write_all(line.as_bytes());
+        }
+    }
+
+    #[cfg(test)]
+    let _ = line;
+}
+
 /// daemon.log 轮转阈值：超过即把现有内容挪到 `daemon.log.1`（覆盖上一代）并清空当前文件。
 /// 上限约束为「两代 × 5MB」，正常运行量级下够追溯数周。
 const LOG_ROTATE_LIMIT: u64 = 5 * 1024 * 1024;
@@ -519,5 +582,43 @@ mod tests {
         assert_eq!(value["reason"], "codex_thread_source_missing");
         assert!(value.get("threadSource").is_none());
         assert_eq!(value["threadId"], "thread-2");
+    }
+
+    #[test]
+    fn no_available_channel_line_contains_only_fixed_channel_reasons() {
+        let line = no_available_channel_line_at(
+            crate::daemon::request::ConfirmAvailability::new(
+                crate::daemon::request::AvailabilityReason::Unavailable,
+                crate::daemon::request::AvailabilityReason::Disabled,
+                crate::daemon::request::AvailabilityReason::AutomationDenied,
+            ),
+            123,
+            456,
+        )
+        .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(value["event"], "no_available_channel");
+        assert_eq!(value["popup"], "unavailable");
+        assert_eq!(value["feishu"], "disabled");
+        assert_eq!(value["imessage"], "automation_denied");
+        for prohibited in [
+            "recipient",
+            "email",
+            "phone",
+            "chatId",
+            "guid",
+            "rowId",
+            "credential",
+            "user@example.test",
+            "private-guid",
+            "private-message",
+        ] {
+            assert!(
+                !line.contains(prohibited),
+                "leaked prohibited field: {prohibited}"
+            );
+        }
+        assert!(value.get("message").is_none());
+        assert!(value.get("messageBody").is_none());
     }
 }

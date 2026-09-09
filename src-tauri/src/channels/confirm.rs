@@ -14,9 +14,7 @@ const DEFAULT_DINGTALK_PERMISSION_TEMPLATE_ID: &str = "3a5ce2de-99b8-4a79-a4ea-6
 
 fn fail(entry: &ConfirmEntry, channel: &str, reason: impl Into<String>) {
     if entry.mark_failed(channel, reason) {
-        entry
-            .coordinator
-            .fallback(ConfirmFallbackReason::NoAvailableChannel);
+        entry.fallback_no_available_channel();
         entry.cancel.notify_waiters();
     }
 }

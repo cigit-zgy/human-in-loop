@@ -9,7 +9,9 @@ use crate::app::RenderOutcome;
 use crate::channels::popup::GuiHelperPopupChannel;
 use crate::i18n::Lang;
 use crate::ipc::{ConfirmTask, PendingRequestInfo, ServerMsg, ShowPayload, TaskRequest};
-use crate::models::{AskRequest, ConfirmDeliveryState, ConfirmRequest, InteractionRequest};
+use crate::models::{
+    AskRequest, ConfirmDeliveryState, ConfirmFallbackReason, ConfirmRequest, InteractionRequest,
+};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -18,6 +20,110 @@ use tokio::sync::Notify;
 
 /// GUI 连接的发送端槽位：Helper 连上后填入，供 popup adapter 下发 `cancel`。
 pub type GuiSlot = Arc<Mutex<Option<UnboundedSender<ServerMsg>>>>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AvailabilityReason {
+    Unavailable,
+    Disabled,
+    NotConfigured,
+    Starting,
+    Ready,
+    WorkerUnavailable,
+    AutomationDenied,
+    WatchFailed,
+    Failed,
+}
+
+impl AvailabilityReason {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Unavailable => "unavailable",
+            Self::Disabled => "disabled",
+            Self::NotConfigured => "not_configured",
+            Self::Starting => "starting",
+            Self::Ready => "ready",
+            Self::WorkerUnavailable => "worker_unavailable",
+            Self::AutomationDenied => "automation_denied",
+            Self::WatchFailed => "watch_failed",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConfirmAvailability {
+    popup: AvailabilityReason,
+    feishu: AvailabilityReason,
+    imessage: AvailabilityReason,
+}
+
+impl ConfirmAvailability {
+    pub const fn new(
+        popup: AvailabilityReason,
+        feishu: AvailabilityReason,
+        imessage: AvailabilityReason,
+    ) -> Self {
+        Self {
+            popup,
+            feishu,
+            imessage,
+        }
+    }
+
+    pub const fn popup(self) -> &'static str {
+        self.popup.as_str()
+    }
+
+    pub const fn feishu(self) -> &'static str {
+        self.feishu.as_str()
+    }
+
+    pub const fn imessage(self) -> &'static str {
+        self.imessage.as_str()
+    }
+}
+
+impl Default for ConfirmAvailability {
+    fn default() -> Self {
+        Self {
+            popup: AvailabilityReason::Unavailable,
+            feishu: AvailabilityReason::Unavailable,
+            imessage: AvailabilityReason::Unavailable,
+        }
+    }
+}
+
+fn safe_failure_reason(channel_id: &str, reason: &str) -> AvailabilityReason {
+    match channel_id {
+        "popup" => AvailabilityReason::Unavailable,
+        "feishu" if reason == "Feishu router unavailable" => AvailabilityReason::Unavailable,
+        "imessage" if reason == crate::channels::imessage::HealthState::NotConfigured.as_str() => {
+            AvailabilityReason::NotConfigured
+        }
+        "imessage"
+            if reason == crate::channels::imessage::HealthState::AutomationDenied.as_str() =>
+        {
+            AvailabilityReason::AutomationDenied
+        }
+        "imessage" if reason == crate::channels::imessage::HealthState::WatchFailed.as_str() => {
+            AvailabilityReason::WatchFailed
+        }
+        "imessage"
+            if reason == "worker_unavailable"
+                || reason
+                    == crate::channels::imessage::HealthState::BotSessionLoginRequired.as_str()
+                || reason
+                    == crate::channels::imessage::HealthState::BotMessagesAccountUnavailable
+                        .as_str()
+                || reason
+                    == crate::channels::imessage::HealthState::BotSenderIdentityUnverified
+                        .as_str() =>
+        {
+            AvailabilityReason::WorkerUnavailable
+        }
+        _ => AvailabilityReason::Failed,
+    }
+}
 
 /// 异步解析出的调用方 agent 信息（方案5/b）：daemon 从 `caller_pid` 向上 walk 进程树后填入，
 /// 经 `ServerMsg::AgentResolved` 后推弹窗 badge；helper 连接时若已就绪也会随握手补发（覆盖竞态）。
@@ -123,6 +229,7 @@ pub struct ConfirmEntry {
     /// Monotonic authority for the fixed confirmation lifetime.
     pub deadline: tokio::time::Instant,
     pub delivery: Mutex<HashMap<String, ConfirmDeliveryState>>,
+    availability: Mutex<ConfirmAvailability>,
     pub gui: GuiSlot,
     pub gui_connected: AtomicBool,
     pub cancel: Arc<Notify>,
@@ -169,11 +276,38 @@ impl InteractionEntry {
 
 impl ConfirmEntry {
     pub fn start_delivery(&self, channel_id: impl Into<String>) {
+        let channel_id = channel_id.into();
+        self.set_availability(&channel_id, AvailabilityReason::Starting);
         self.delivery
             .lock()
             .unwrap()
-            .entry(channel_id.into())
+            .entry(channel_id)
             .or_insert(ConfirmDeliveryState::Starting);
+    }
+
+    pub fn set_availability(&self, channel_id: &str, reason: AvailabilityReason) {
+        let mut availability = self.availability.lock().unwrap();
+        match channel_id {
+            "popup" => availability.popup = reason,
+            "feishu" => availability.feishu = reason,
+            "imessage" => availability.imessage = reason,
+            _ => {}
+        }
+    }
+
+    pub fn availability_snapshot(&self) -> ConfirmAvailability {
+        *self.availability.lock().unwrap()
+    }
+
+    pub fn fallback_no_available_channel(&self) -> bool {
+        if !self
+            .coordinator
+            .fallback(ConfirmFallbackReason::NoAvailableChannel)
+        {
+            return false;
+        }
+        crate::daemon::lifecycle::log_no_available_channel(self.availability_snapshot());
+        true
     }
 
     /// Mark a surface ready only while it is still Starting. A success arriving after timeout is
@@ -187,6 +321,8 @@ impl ConfirmEntry {
             return false;
         }
         *state = ConfirmDeliveryState::Ready { message_id };
+        drop(delivery);
+        self.set_availability(channel_id, AvailabilityReason::Ready);
         true
     }
 
@@ -198,6 +334,8 @@ impl ConfirmEntry {
     }
 
     pub fn mark_starting_failed(&self, channel_id: &str, reason: impl Into<String>) -> bool {
+        let reason = reason.into();
+        let safe_reason = safe_failure_reason(channel_id, &reason);
         let mut delivery = self.delivery.lock().unwrap();
         let Some(state) = delivery.get_mut(channel_id) else {
             return false;
@@ -205,16 +343,19 @@ impl ConfirmEntry {
         if !matches!(state, ConfirmDeliveryState::Starting) {
             return false;
         }
-        *state = ConfirmDeliveryState::Failed {
-            reason: reason.into(),
-        };
-        delivery
+        *state = ConfirmDeliveryState::Failed { reason };
+        let exhausted = delivery
             .values()
-            .all(|state| matches!(state, ConfirmDeliveryState::Failed { .. }))
+            .all(|state| matches!(state, ConfirmDeliveryState::Failed { .. }));
+        drop(delivery);
+        self.set_availability(channel_id, safe_reason);
+        exhausted
     }
 
     /// Mark a candidate failed and return whether no Starting/Ready candidates remain.
     pub fn mark_failed(&self, channel_id: &str, reason: impl Into<String>) -> bool {
+        let reason = reason.into();
+        let safe_reason = safe_failure_reason(channel_id, &reason);
         let mut delivery = self.delivery.lock().unwrap();
         let Some(state) = delivery.get_mut(channel_id) else {
             return false;
@@ -222,13 +363,14 @@ impl ConfirmEntry {
         if matches!(state, ConfirmDeliveryState::Terminal) {
             return false;
         }
-        *state = ConfirmDeliveryState::Failed {
-            reason: reason.into(),
-        };
-        !delivery.is_empty()
+        *state = ConfirmDeliveryState::Failed { reason };
+        let exhausted = !delivery.is_empty()
             && delivery
                 .values()
-                .all(|state| matches!(state, ConfirmDeliveryState::Failed { .. }))
+                .all(|state| matches!(state, ConfirmDeliveryState::Failed { .. }));
+        drop(delivery);
+        self.set_availability(channel_id, safe_reason);
+        exhausted
     }
 
     pub fn mark_deliveries_terminal(&self) {
@@ -297,6 +439,7 @@ pub fn create_internal_confirm(
         caller_pid: 0,
         deadline: tokio::time::Instant::now() + ttl,
         delivery: Mutex::new(HashMap::new()),
+        availability: Mutex::new(ConfirmAvailability::default()),
         gui: Arc::new(Mutex::new(None)),
         gui_connected: AtomicBool::new(false),
         cancel: Arc::new(Notify::new()),
@@ -621,6 +764,7 @@ impl RequestRegistry {
             caller_pid: task.caller_pid,
             deadline: tokio::time::Instant::now() + std::time::Duration::from_secs(TTL_SECS),
             delivery: Mutex::new(HashMap::new()),
+            availability: Mutex::new(ConfirmAvailability::default()),
             gui: Arc::new(Mutex::new(None)),
             gui_connected: AtomicBool::new(false),
             cancel: Arc::new(Notify::new()),
@@ -1205,6 +1349,64 @@ mod tests {
         assert!(entry.mark_starting_failed("popup", "timeout"));
         assert!(!entry.mark_ready("popup", String::new()));
         assert!(!entry.is_ready("popup"));
+    }
+
+    #[tokio::test]
+    async fn no_available_channel_keeps_fallback_and_coarse_reasons() {
+        let (entry, mut outcome) = create_internal_confirm(
+            confirm_task().spec,
+            "mcp",
+            "en",
+            "/tmp/project",
+            "codex",
+            std::time::Duration::from_secs(60),
+        )
+        .unwrap();
+        entry.set_availability("popup", AvailabilityReason::Unavailable);
+        entry.set_availability("feishu", AvailabilityReason::Disabled);
+        entry.set_availability("imessage", AvailabilityReason::Disabled);
+
+        assert!(entry.fallback_no_available_channel());
+        assert_eq!(
+            outcome.recv().await,
+            Some(ConfirmOutcome::Fallback(
+                crate::models::ConfirmFallbackReason::NoAvailableChannel
+            ))
+        );
+        assert_eq!(
+            entry.availability_snapshot(),
+            ConfirmAvailability::new(
+                AvailabilityReason::Unavailable,
+                AvailabilityReason::Disabled,
+                AvailabilityReason::Disabled,
+            )
+        );
+    }
+
+    #[test]
+    fn imessage_failure_before_ready_records_only_coarse_reason() {
+        let (entry, _outcome) = create_internal_confirm(
+            confirm_task().spec,
+            "imessage",
+            "en",
+            "/tmp/project",
+            "codex",
+            std::time::Duration::from_secs(60),
+        )
+        .unwrap();
+        assert!(entry.mark_failed("imessage", "automation_denied"));
+        assert_eq!(
+            entry.availability_snapshot().imessage(),
+            "automation_denied"
+        );
+
+        assert_eq!(
+            safe_failure_reason(
+                "imessage",
+                "recipient=user@example.test chat=private-guid body=private-message"
+            ),
+            AvailabilityReason::Failed
+        );
     }
 
     /// `in_flight_agent_requests`（spec gui-agent-console C7/R2）：session → request_id 映射，

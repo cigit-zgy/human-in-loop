@@ -1905,6 +1905,7 @@ async fn handle_submit_confirm(
     let config = state.config_snapshot();
     let popup_enabled = popup_should_dispatch(&config, has_display());
     let im_candidates = confirm_im_candidates(&entry, state, &config, popup_enabled);
+    initialize_confirm_availability(&entry, &config, popup_enabled);
     if popup_enabled {
         entry.start_delivery("popup");
     }
@@ -1912,18 +1913,14 @@ async fn handle_submit_confirm(
         entry.start_delivery(*channel);
     }
     if !popup_enabled && im_candidates.is_empty() {
-        entry
-            .coordinator
-            .fallback(ConfirmFallbackReason::NoAvailableChannel);
+        entry.fallback_no_available_channel();
     }
 
     if popup_enabled {
         if dispatch_interaction_popup(InteractionEntry::Confirm(entry.clone()), state, "", false) {
             spawn_confirm_popup_watchdog(entry.clone());
         } else if entry.mark_failed("popup", "failed to spawn popup helper") {
-            entry
-                .coordinator
-                .fallback(ConfirmFallbackReason::NoAvailableChannel);
+            entry.fallback_no_available_channel();
         }
     }
     let setup = async {
@@ -2779,9 +2776,7 @@ async fn serve_confirm_gui(
         *slot = None;
     }
     if failed && entry.mark_failed("popup", "popup helper disconnected") {
-        entry
-            .coordinator
-            .fallback(ConfirmFallbackReason::NoAvailableChannel);
+        entry.fallback_no_available_channel();
     }
     drop(gui_tx);
     let _ = writer.await;
@@ -2940,9 +2935,7 @@ fn spawn_confirm_popup_watchdog(entry: Arc<request::ConfirmEntry>) {
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_secs(request::GUI_CONNECT_TIMEOUT_SECS)).await;
         if entry.mark_starting_failed("popup", "popup did not become ready in time") {
-            entry
-                .coordinator
-                .fallback(ConfirmFallbackReason::NoAvailableChannel);
+            entry.fallback_no_available_channel();
             entry.cancel.notify_waiters();
         }
     });
@@ -3417,6 +3410,43 @@ fn confirm_im_candidates(
     )
 }
 
+fn initialize_confirm_availability(
+    entry: &request::ConfirmEntry,
+    config: &AppConfig,
+    popup_available: bool,
+) {
+    use request::AvailabilityReason;
+
+    entry.set_availability(
+        "popup",
+        if popup_available {
+            AvailabilityReason::Starting
+        } else {
+            AvailabilityReason::Unavailable
+        },
+    );
+    entry.set_availability(
+        "feishu",
+        if !config.channels.feishu.enabled {
+            AvailabilityReason::Disabled
+        } else if !crate::app::is_feishu_active(config) {
+            AvailabilityReason::NotConfigured
+        } else {
+            AvailabilityReason::Unavailable
+        },
+    );
+    entry.set_availability(
+        "imessage",
+        if !config.channels.imessage.enabled {
+            AvailabilityReason::Disabled
+        } else if config.channels.imessage.recipient.trim().is_empty() {
+            AvailabilityReason::NotConfigured
+        } else {
+            AvailabilityReason::Unavailable
+        },
+    );
+}
+
 async fn attach_confirm_im_channels(
     entry: &Arc<request::ConfirmEntry>,
     state: &Arc<ServerState>,
@@ -3433,9 +3463,7 @@ async fn attach_confirm_im_channels(
                 ),
                 None => {
                     if entry.mark_failed("feishu", "Feishu router unavailable") {
-                        entry
-                            .coordinator
-                            .fallback(ConfirmFallbackReason::NoAvailableChannel);
+                        entry.fallback_no_available_channel();
                     }
                 }
             },
