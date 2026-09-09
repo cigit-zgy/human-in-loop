@@ -72,12 +72,28 @@ Input semantics:
 ```text
 repository_path      required for repository-associated requests
 source_agent         required short agent/source identity
-question             required decision question
+question             required concise decision question
+detail               optional multiline decision evidence/body
 choices              required 2–6 stable semantic choices
-context              optional compact decision context
+context              optional compact metadata/context
 recommended_choice   optional stable choice id
 request_id            optional caller-provided id; otherwise generated locally
 ```
+
+`question` and `detail` are intentionally different:
+
+```text
+question
+= the concise decision the human must answer
+
+detail
+= bounded multiline evidence needed to make that decision
+
+context
+= short metadata only; it is not the long-form body
+```
+
+The public `detail` field is optional and backward-compatible. Existing callers that omit it retain current behavior. `detail` is mapped into the canonical confirmation detail/body representation and preserves meaningful internal newlines/paragraph separation. It MUST NOT be normalized through `split_whitespace()` or otherwise collapsed into one long context line.
 
 Each choice contains:
 
@@ -105,6 +121,24 @@ start canonical request
 ```
 
 Client cancellation/disconnect and server shutdown propagate to the coordinator and reap request-owned channel watchers/processes. No orphaned active request remains.
+
+### Decision-body budget policy
+
+`human-in-loop` must support substantive decisions, not only short yes/no approvals. Scientific review cards, release decisions, security decisions and design choices may require hundreds of Unicode characters of evidence.
+
+The product therefore distinguishes a user-facing configurable operational budget from an absolute defensive ceiling:
+
+```text
+default detail budget          = 1000 Unicode characters
+default fully rendered budget  = 1500 Unicode characters
+absolute rendered safety cap   = 5000 Unicode characters
+```
+
+The default budget is not a hard product capability boundary. The User may configure a larger iMessage decision-body/rendered budget when needed, up to the absolute safety cap. The absolute cap is retained to prevent accidental transport of unbounded logs, documents, credentials or model dumps through one decision message.
+
+Structural limits that protect the interaction contract remain bounded independently, including choice count and compact choice labels. `context` remains a compact metadata surface and is not made into an unlimited substitute for `detail`.
+
+Configuration validation must fail closed on invalid values. It must not silently truncate decision evidence. If the configured budget is exceeded, the request fails before mutation with a typed/redacted payload-size reason rather than silently dropping content.
 
 ## notify_human
 
@@ -224,6 +258,8 @@ Tool/runtime failure before a mandatory human decision is obtained means the cal
 
 The tool must never synthesize a default decision.
 
+Payload/rendering rejection remains fail-closed. The daemon/channel diagnostic boundary should preserve a fixed redacted reason such as `detail_too_long`, `rendered_text_too_long`, or another typed coarse status so a caller/operator can distinguish payload incompatibility from channel/session failure without exposing the decision body or private transport identifiers.
+
 ## notify_human
 
 Notification transport failure is returned truthfully to the caller. The tool does not alter the caller's already-established task verdict.
@@ -242,6 +278,14 @@ ask_human canonical request construction
 ask_human stable choice mapping
 ask_human exactly-one terminal result
 ask_human cancellation/shutdown cleanup
+ask_human detail omitted -> historical behavior unchanged
+ask_human detail preserves multiline content
+ask_human detail 999 chars -> pass default budget
+ask_human detail 1000 chars -> pass default budget
+ask_human detail 1001 chars -> explicit fail under default budget
+larger valid user-configured budget -> pass up to configured value
+configured/absolute ceiling violations -> fail closed with typed redacted reason
+legacy compact context remains compatible
 notify_human creates no pending decision request
 notify_human does not wait for human reply
 notify_human compact status/summary/task/locator propagation
@@ -254,7 +298,7 @@ no generic command/file capability exposed
 
 A local MCP-client E2E must invoke both production tools through the server boundary rather than calling internal Rust functions directly.
 
-For `ask_human`, complete one real correlated decision round trip. For `notify_human`, deliver one harmless terminal-style message and prove the MCP call returns without waiting for a human response.
+For this decision-body extension, synthetic E2E must include a WME-sized Chinese multiline decision body in the approximate 600–800 character range. Before release qualification, one real installed-Codex-MCP iMessage round trip must use a similarly sized harmless multiline body and return exactly one correlated canonical result.
 
 # Design acceptance
 
@@ -263,10 +307,14 @@ The MCP interface is conforming when:
 ```text
 ask_human
 = one safe blocking correlated human decision path
+  with concise question + optional bounded multiline evidence
 
 notify_human
 = one safe non-blocking informational dispatch path
 
+AND existing callers remain backward-compatible
+AND users may raise the operational decision-body budget within the absolute safety ceiling
+AND evidence is never silently truncated or flattened into compact metadata
 AND both reuse the existing maintained channel infrastructure
 AND neither exposes transport secrets or generic local execution
 AND no second confirmation/coordinator/server model is introduced
