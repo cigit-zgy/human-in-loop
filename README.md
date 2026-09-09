@@ -4,14 +4,17 @@ A focused human-in-the-loop bridge for coding agents. The maintained remote deli
 
 The project originated by adapting the open-source architecture of [`Naituw/AskHuman`](https://github.com/Naituw/AskHuman) and reuses [`openclaw/imsg`](https://github.com/openclaw/imsg) as an external macOS transport dependency. AskHuman is not a maintained runtime dependency or product identity. Carrier messaging is deliberately excluded: no SMS, MMS, RCS, paid messaging gateway, or automatic carrier fallback is permitted.
 
-## v0.1.1 release
+## v0.1.2 release
 
-`v0.1.1` is a source-only hotfix release. It removes the known project-managed
-legacy Codex MCP isolated-home override during install/update while preserving
-unknown custom homes, so MCP, CLI, and daemon use the same canonical
-human-in-loop configuration by default. `NoAvailableChannel` remains
-fail-closed and now records only redacted, fixed channel-availability reasons.
-It does not claim a notarized downloadable macOS installer or general binary
+`v0.1.2` is a source-only compatibility release. It adds optional multiline
+`ask_human.detail` for substantive decision evidence while keeping `context`
+as compact metadata. iMessage defaults to 1,000 Unicode characters for detail
+and 1,500 for the complete confirmation; users may raise these limits up to
+the absolute 4,500/5,000-character safety ceilings. Oversized or invalid
+budgets fail closed without silent truncation and expose only fixed redacted
+reasons. Transport, Bot/TCC, no-SMS, Feishu, daemon, notification, and the
+v0.1.1 canonical-HOME migration behavior remain unchanged. This release does
+not claim a notarized downloadable macOS installer or general binary
 distribution.
 
 The production macOS path has been qualified with a real distinct-account Apple Messages round trip:
@@ -30,7 +33,7 @@ Codex / MCP
 The current accepted design lives under [`design/`](design/README.md); historical reasoning under `reports/concept/` never overrides it.
 
 Normal terminal task completion attempts one compact `notify_human` delivery.
-Periodic or progress notifications remain deferred in `v0.1.1`.
+Periodic or progress notifications remain deferred in `v0.1.2`.
 
 ## Production Apple Messages topology
 
@@ -120,11 +123,11 @@ notify_human
 = non-blocking informational notification
 ```
 
-`ask_human` accepts a compact question plus 2–6 choices with stable semantic IDs. Repository-associated requests supply `repository_path`; the server resolves the canonical GitHub repository slug locally. The result returns canonical `request_id`, `selected_choice_id`, and `source_channel_id`, not the phone's numeric option.
+`ask_human` accepts a compact question, optional bounded multiline `detail`, and 2–6 choices with stable semantic IDs. Optional `context` remains compact metadata. Repository-associated requests supply `repository_path`; the server resolves the canonical GitHub repository slug locally. The result returns canonical `request_id`, `selected_choice_id`, and `source_channel_id`, not the phone's numeric option. Decision evidence is never silently truncated; invalid or oversized payloads fail closed.
 
 `notify_human` sends compact task/status information without creating a pending decision or waiting for acknowledgement.
 It is the default terminal-task reporting behavior; it is not a periodic or
-progress-notification mechanism in `v0.1.1`.
+progress-notification mechanism in `v0.1.2`.
 
 Recipient identity, channel credentials, Apple credentials, raw transport commands, generic file operations, and private Messages data are not MCP inputs. Configuration remains local. The interface exposes no public unauthenticated HTTP endpoint and does not use GitHub as a runtime message relay.
 
