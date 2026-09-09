@@ -31,6 +31,9 @@ pub enum AvailabilityReason {
     WorkerUnavailable,
     AutomationDenied,
     WatchFailed,
+    DetailTooLong,
+    RenderedTextTooLong,
+    InvalidDecisionBudget,
     Failed,
 }
 
@@ -45,6 +48,9 @@ impl AvailabilityReason {
             Self::WorkerUnavailable => "worker_unavailable",
             Self::AutomationDenied => "automation_denied",
             Self::WatchFailed => "watch_failed",
+            Self::DetailTooLong => "detail_too_long",
+            Self::RenderedTextTooLong => "rendered_text_too_long",
+            Self::InvalidDecisionBudget => "invalid_decision_budget",
             Self::Failed => "failed",
         }
     }
@@ -107,6 +113,11 @@ fn safe_failure_reason(channel_id: &str, reason: &str) -> AvailabilityReason {
         }
         "imessage" if reason == crate::channels::imessage::HealthState::WatchFailed.as_str() => {
             AvailabilityReason::WatchFailed
+        }
+        "imessage" if reason == "detail_too_long" => AvailabilityReason::DetailTooLong,
+        "imessage" if reason == "rendered_text_too_long" => AvailabilityReason::RenderedTextTooLong,
+        "imessage" if reason == "invalid_decision_budget" => {
+            AvailabilityReason::InvalidDecisionBudget
         }
         "imessage"
             if reason == "worker_unavailable"
@@ -1407,6 +1418,28 @@ mod tests {
             ),
             AvailabilityReason::Failed
         );
+    }
+
+    #[test]
+    fn imessage_payload_failures_record_fixed_redacted_reasons() {
+        for reason in [
+            "detail_too_long",
+            "rendered_text_too_long",
+            "invalid_decision_budget",
+        ] {
+            let (entry, _outcome) = create_internal_confirm(
+                confirm_task().spec,
+                "imessage",
+                "en",
+                "/tmp/project",
+                "codex",
+                std::time::Duration::from_secs(60),
+            )
+            .unwrap();
+            entry.start_delivery("imessage");
+            assert!(entry.mark_failed("imessage", reason));
+            assert_eq!(entry.availability_snapshot().imessage(), reason);
+        }
     }
 
     /// `in_flight_agent_requests`（spec gui-agent-console C7/R2）：session → request_id 映射，

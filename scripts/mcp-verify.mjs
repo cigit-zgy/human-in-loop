@@ -71,6 +71,16 @@ async function quiescent() {
 const base = (requestId, count = 2) => ({ repository_path: repo, source_agent: 'Codex', question: 'Synthetic MCP confirmation?',
   choices: Array.from({ length: count }, (_, index) => ({ id: index ? `other_${index}` : 'received_correctly', label: index ? `Other ${index}` : 'Received correctly' })),
   request_id: requestId });
+const richDetail = [
+  ['进度', '这是完全合成的审阅进度说明，用于确认多行正文在协议、协调器与手机文本渲染之间保持一致。'.repeat(3)],
+  ['中文题目', '虚构循环水系统的结构化决策卡，不对应任何真实论文、作者、数据或生产结论。'.repeat(3)],
+  ['研究对象', '对象仅为测试用的进水区、反应区和回流区，所有条件与观察量均为人工编写。'.repeat(3)],
+  ['模型或计算方法', '采用假想的分区平衡步骤组织证据，只验证字符预算与段落边界，不产生科学主张。'.repeat(3)],
+  ['模型承担的作用', '模型只负责排列合成证据、候选解释和判据，使审阅者能看到完整决策上下文。'.repeat(3)],
+  ['与模型直接相关的关键结果', '段落标题应独立成行，五个稳定选择应完整出现，返回值仍是语义标识。'.repeat(3)],
+  ['判据提醒', '只判断正文、换行、问题与选项是否完整；若发生截断或合并，应阻止继续。'.repeat(2)],
+].map(([heading, body]) => `${heading}\n${body}`).join('\n\n');
+assert([...richDetail].length >= 600 && [...richDetail].length <= 800, 'rich detail fixture must stay WME-sized');
 const notification = (notificationId, status = 'PASS') => ({ repository_path: repo, source_agent: 'Codex', status,
   summary: 'Synthetic terminal verification 完成', task_id: 'SYNTHETIC-VERIFICATION',
   context: [{ label: 'Checks', value: 'Passed' }], locator: 'reports/codex/synthetic.md', notification_id: notificationId });
@@ -127,7 +137,7 @@ try {
   const askTool = list.tools.find((tool) => tool.name === 'ask_human');
   const notifyTool = list.tools.find((tool) => tool.name === 'notify_human');
   const schema = askTool.inputSchema;
-  assert.deepEqual(Object.keys(schema.properties).sort(), ['choices', 'context', 'question', 'recommended_choice', 'repository_path', 'request_id', 'source_agent']);
+  assert.deepEqual(Object.keys(schema.properties).sort(), ['choices', 'context', 'detail', 'question', 'recommended_choice', 'repository_path', 'request_id', 'source_agent']);
   assert.deepEqual(schema.required.toSorted(), ['choices', 'question', 'source_agent']);
   assert.equal(schema.properties.choices.minItems, 2);
   assert.equal(schema.properties.choices.maxItems, 6);
@@ -179,6 +189,17 @@ try {
   assert((await client.response(client.request('unknown/method'))).error);
   check('malformed/missing/boundary/unknown-field payloads rejected before any channel send', { rejected_payloads: invalid.length + invalidNotifications.length, application_sends: 0 });
 
+  const privatePayloadMarker = 'PRIVATE-PAYLOAD-MARKER-DO-NOT-LOG';
+  const oversized = { ...base('detail-too-long'), detail: privatePayloadMarker + '界'.repeat(1001) };
+  const beforeOversized = sends();
+  assert(rejected(await client.response(client.ask(oversized))));
+  await quiescent();
+  assert.equal(sends(), beforeOversized, 'oversized detail must fail before mutation');
+  const daemonLog = fs.readFileSync(path.join(configDir, 'daemon.log'), 'utf8');
+  assert(daemonLog.split('\n').some((line) => line.includes('"event":"no_available_channel"') && line.includes('"imessage":"detail_too_long"')));
+  assert(!daemonLog.includes(privatePayloadMarker), 'payload content leaked into diagnostics');
+  check('oversized decision body fails before send with a fixed redacted channel reason', { application_sends: 0 });
+
   client.child.stdin.write('{malformed JSON\n');
   client.send({ jsonrpc: '2.0', id: 'malformed-request', params: {} });
   assert((await client.response(client.request('ping'))).result);
@@ -197,6 +218,29 @@ try {
     assert.equal(client.responses.filter((row) => row.id === pending.request.id).length, 1);
   }
   check('2 and 6 choices, Unicode, recommendation, production rendering, stable result, one send/terminal', { requests: 2, application_sends: 2, canonical_results: 2 });
+
+  const richArgs = {
+    ...base('rich-detail', 5),
+    context: '合成审阅回归',
+    detail: richDetail,
+    choices: [
+      { id: 'approve', label: '内容完整' },
+      { id: 'minor_revision', label: '小幅修订' },
+      { id: 'major_revision', label: '大幅修订' },
+      { id: 'insufficient_evidence', label: '证据不足' },
+      { id: 'stop', label: '停止继续' },
+    ],
+  };
+  const beforeRich = sends();
+  const rich = await waiting(client, richArgs);
+  assert(rich.record.text.includes(richDetail));
+  assert(rich.record.text.includes('\n\n判据提醒\n'));
+  for (const choice of richArgs.choices) assert(rich.record.text.includes(choice.label));
+  emit(reply(rich));
+  result(await client.response(rich.request), 'rich-detail', 'approve');
+  await quiescent();
+  assert.equal(sends(), beforeRich + 1);
+  check('WME-sized synthetic multiline detail crosses real MCP, daemon, coordinator and production renderer', { detail_chars: [...richDetail].length, choices: 5, application_sends: 1, canonical_results: 1 });
 
   const correlated = await waiting(client, base('strict-correlation'));
   const wrong = correlated.token === 'FFFF' ? 'EEEE' : 'FFFF';
@@ -409,8 +453,8 @@ try {
     synthetic_application_sends: sends(), canonical_results: structuredResults.filter((value) => value.selected_choice_id).length,
     notification_results: structuredResults.filter((value) => value.delivery_status).length,
     active_requests: (await status()).activeRequests, synthetic_processes_alive: liveFakePids().length };
-  assert.equal(summary.synthetic_application_sends, 29);
-  assert.equal(summary.canonical_results, 6);
+  assert.equal(summary.synthetic_application_sends, 30);
+  assert.equal(summary.canonical_results, 7);
   assert.equal(summary.notification_results, 9 + forcedStopResults);
   passed = true;
 } finally {

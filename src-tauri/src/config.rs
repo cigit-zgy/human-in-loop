@@ -344,7 +344,10 @@ pub enum IMessageIdentityMode {
 }
 
 /// One user-approved Apple Messages destination, resolved to a direct iMessage chat when known.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub const DEFAULT_DECISION_DETAIL_MAX_CHARS: usize = 1000;
+pub const DEFAULT_DECISION_RENDERED_MAX_CHARS: usize = 1500;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct IMessageChannelConfig {
     pub enabled: bool,
@@ -352,6 +355,22 @@ pub struct IMessageChannelConfig {
     pub identity_mode: IMessageIdentityMode,
     pub chat_id: Option<i64>,
     pub chat_guid: String,
+    pub decision_detail_max_chars: usize,
+    pub decision_rendered_max_chars: usize,
+}
+
+impl Default for IMessageChannelConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            recipient: String::new(),
+            identity_mode: IMessageIdentityMode::default(),
+            chat_id: None,
+            chat_guid: String::new(),
+            decision_detail_max_chars: DEFAULT_DECISION_DETAIL_MAX_CHARS,
+            decision_rendered_max_chars: DEFAULT_DECISION_RENDERED_MAX_CHARS,
+        }
+    }
 }
 
 /// Slack 渠道配置。
@@ -675,6 +694,9 @@ mod tests {
         );
         assert!(c.channels.imessage.chat_id.is_none());
         assert!(c.channels.imessage.chat_guid.is_empty());
+        let imessage = serde_json::to_value(&c.channels.imessage).unwrap();
+        assert_eq!(imessage["decisionDetailMaxChars"], 1000);
+        assert_eq!(imessage["decisionRenderedMaxChars"], 1500);
         // 「按需发送」默认关；子开关「自动结束 watch」默认开。
         assert!(!c.channels.auto_activation);
         assert!(c.channels.auto_end_watch);
@@ -798,6 +820,17 @@ mod tests {
             IMessageIdentityMode::SameAccount
         );
         assert_eq!(loaded.channels.imessage.chat_id, Some(42));
+    }
+
+    #[test]
+    fn legacy_imessage_config_loads_decision_budget_defaults() {
+        let config: AppConfig = serde_json::from_str(
+            r#"{"channels":{"imessage":{"enabled":true,"recipient":"private"}}}"#,
+        )
+        .unwrap();
+        let imessage = serde_json::to_value(config.channels.imessage).unwrap();
+        assert_eq!(imessage["decisionDetailMaxChars"], 1000);
+        assert_eq!(imessage["decisionRenderedMaxChars"], 1500);
     }
 
     #[test]

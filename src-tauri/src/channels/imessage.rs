@@ -22,7 +22,9 @@ pub const MAX_CONTEXT_LINE_CHARS: usize = 80;
 pub const MIN_CHOICES: usize = 2;
 pub const MAX_CHOICES: usize = 6;
 pub const MAX_CHOICE_LABEL_CHARS: usize = 60;
-pub const MAX_RENDERED_CHARS: usize = 700;
+pub const MAX_NOTIFICATION_RENDERED_CHARS: usize = 700;
+pub const ABSOLUTE_DETAIL_MAX_CHARS: usize = 4500;
+pub const ABSOLUTE_RENDERED_MAX_CHARS: usize = 5000;
 pub const MAX_IMAGE_BYTES: u64 = 5 * 1024 * 1024;
 pub(crate) const SUPPORTED_IMSG_VERSION: &str = "0.15.1";
 pub(crate) const IMSG_EXECUTABLE_ENV: &str = "HUMAN_IN_LOOP_IMSG_EXECUTABLE";
@@ -52,8 +54,50 @@ pub enum UnsupportedReason {
     ChoiceCount,
     ChoiceLabelTooLong,
     InteractiveInput,
+    DetailTooLong,
     RenderedTextTooLong,
+    InvalidDecisionBudget,
     RequiredImageUnsupported,
+}
+
+impl UnsupportedReason {
+    pub fn diagnostic_reason(&self) -> String {
+        match self {
+            Self::DetailTooLong => "detail_too_long".into(),
+            Self::RenderedTextTooLong => "rendered_text_too_long".into(),
+            Self::InvalidDecisionBudget => "invalid_decision_budget".into(),
+            other => format!("unsupported: {other:?}"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DecisionBudgets {
+    detail_max_chars: usize,
+    rendered_max_chars: usize,
+}
+
+impl DecisionBudgets {
+    pub(crate) const fn rendered_max_chars(self) -> usize {
+        self.rendered_max_chars
+    }
+}
+
+pub fn decision_budgets(
+    config: &IMessageChannelConfig,
+) -> Result<DecisionBudgets, UnsupportedReason> {
+    if config.decision_detail_max_chars == 0
+        || config.decision_rendered_max_chars == 0
+        || config.decision_detail_max_chars > config.decision_rendered_max_chars
+        || config.decision_detail_max_chars > ABSOLUTE_DETAIL_MAX_CHARS
+        || config.decision_rendered_max_chars > ABSOLUTE_RENDERED_MAX_CHARS
+    {
+        return Err(UnsupportedReason::InvalidDecisionBudget);
+    }
+    Ok(DecisionBudgets {
+        detail_max_chars: config.decision_detail_max_chars,
+        rendered_max_chars: config.decision_rendered_max_chars,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,6 +118,23 @@ pub fn render_confirmation(
     source: &str,
     repository: Option<&str>,
 ) -> Result<RenderedConfirmation, UnsupportedReason> {
+    render_confirmation_with_config(
+        request,
+        token,
+        source,
+        repository,
+        &IMessageChannelConfig::default(),
+    )
+}
+
+pub fn render_confirmation_with_config(
+    request: &ConfirmRequest,
+    token: &str,
+    source: &str,
+    repository: Option<&str>,
+    config: &IMessageChannelConfig,
+) -> Result<RenderedConfirmation, UnsupportedReason> {
+    let budgets = decision_budgets(config)?;
     let question = compact_line(&request.detail.summary);
     if question.chars().count() > MAX_QUESTION_CHARS {
         return Err(UnsupportedReason::QuestionTooLong);
@@ -145,6 +206,20 @@ pub fn render_confirmation(
     };
     let mut lines = vec![format!("[HIL · {token}]"), source_line];
     lines.extend(context_lines);
+    let detail = request
+        .detail
+        .body_md
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .trim()
+        .to_string();
+    if detail.chars().count() > budgets.detail_max_chars {
+        return Err(UnsupportedReason::DetailTooLong);
+    }
+    if !detail.is_empty() {
+        lines.push(String::new());
+        lines.push(detail);
+    }
     lines.push(String::new());
     lines.push(question);
     lines.push(String::new());
@@ -165,7 +240,7 @@ pub fn render_confirmation(
     lines.push(String::new());
     lines.push(format!("Reply: {token} 1"));
     let text = lines.join("\n");
-    if text.chars().count() > MAX_RENDERED_CHARS {
+    if text.chars().count() > budgets.rendered_max_chars {
         return Err(UnsupportedReason::RenderedTextTooLong);
     }
     Ok(RenderedConfirmation {
@@ -1022,7 +1097,7 @@ mod tests {
             context: vec![],
             detail: ConfirmDetail {
                 summary: "Continue?".into(),
-                body_md: "Optional explanation".into(),
+                body_md: String::new(),
             },
             choices: vec![
                 ConfirmChoice {
@@ -1059,6 +1134,7 @@ mod tests {
             identity_mode: crate::config::IMessageIdentityMode::DistinctPeer,
             chat_id: Some(42),
             chat_guid: "iMessage;-;+15551234567".into(),
+            ..IMessageChannelConfig::default()
         }
     }
 
@@ -1129,6 +1205,118 @@ mod tests {
             .text
             .contains("\nDoes this compact layout look correct?\n"));
         assert!(rendered.text.contains("\n1  Looks correct [recommended]\n"));
+    }
+
+    #[test]
+    fn renderer_preserves_multiline_detail_as_decision_evidence() {
+        let mut multiline = request();
+        multiline.detail.body_md = "line A\nline B\n\nline C".into();
+        let rendered = render_confirmation(&multiline, "7F32", "Codex", None).unwrap();
+
+        assert!(rendered
+            .text
+            .contains("\n\nline A\nline B\n\nline C\n\nContinue?\n"));
+        assert!(!rendered.text.contains("line A line B line C"));
+    }
+
+    #[test]
+    fn renderer_enforces_default_detail_character_budget_without_truncation() {
+        for count in [999, 1000] {
+            let mut bounded = request();
+            bounded.detail.body_md = "界".repeat(count);
+            let rendered = render_confirmation(&bounded, "7F32", "Codex", None).unwrap();
+            assert_eq!(rendered.text.matches('界').count(), count);
+        }
+
+        let mut over = request();
+        over.detail.body_md = "界".repeat(1001);
+        assert_eq!(
+            format!(
+                "{:?}",
+                render_confirmation(&over, "7F32", "Codex", None).unwrap_err()
+            ),
+            "DetailTooLong"
+        );
+    }
+
+    #[test]
+    fn renderer_enforces_the_default_full_rendered_budget_separately() {
+        fn boundary_request(detail_chars: usize) -> ConfirmRequest {
+            let mut boundary = request();
+            boundary.context = vec![
+                context("甲", &"界".repeat(77)),
+                context("乙", &"文".repeat(77)),
+            ];
+            boundary.detail.summary = "问".repeat(160);
+            boundary.detail.body_md = "证".repeat(detail_chars);
+            boundary.presentation = ConfirmPresentation::SingleSelectSubmit {
+                input: None,
+                submit_label: "Submit".into(),
+                default_action_id: None,
+            };
+            boundary.choices = (0..6)
+                .map(|index| ConfirmChoice {
+                    id: format!("choice-{index}"),
+                    label: "选".repeat(60),
+                    description: String::new(),
+                    role: ActionRole::Default,
+                    variant: None,
+                })
+                .collect();
+            boundary.dismiss_action_id = "choice-5".into();
+            boundary
+        }
+
+        let exact =
+            render_confirmation(&boundary_request(681), "7F32", &"S".repeat(80), None).unwrap();
+        assert_eq!(exact.text.chars().count(), 1500);
+        assert_eq!(
+            format!(
+                "{:?}",
+                render_confirmation(&boundary_request(682), "7F32", &"S".repeat(80), None)
+                    .unwrap_err()
+            ),
+            "RenderedTextTooLong"
+        );
+    }
+
+    #[test]
+    fn configured_decision_budgets_allow_larger_bodies_and_reject_invalid_values() {
+        let mut request = request();
+        request.detail.body_md = "界".repeat(1500);
+        assert_eq!(
+            render_confirmation(&request, "7F32", "Codex", None),
+            Err(UnsupportedReason::DetailTooLong)
+        );
+
+        let mut config = IMessageChannelConfig {
+            decision_detail_max_chars: 2000,
+            decision_rendered_max_chars: 2600,
+            ..IMessageChannelConfig::default()
+        };
+        let rendered =
+            render_confirmation_with_config(&request, "7F32", "Codex", None, &config).unwrap();
+        assert_eq!(rendered.text.matches('界').count(), 1500);
+
+        for (detail, rendered) in [
+            (0, 1500),
+            (1000, 0),
+            (1501, 1500),
+            (4501, 5000),
+            (4500, 5001),
+        ] {
+            config.decision_detail_max_chars = detail;
+            config.decision_rendered_max_chars = rendered;
+            assert_eq!(
+                render_confirmation_with_config(&request, "7F32", "Codex", None, &config,),
+                Err(UnsupportedReason::InvalidDecisionBudget)
+            );
+        }
+
+        config.decision_detail_max_chars = 4500;
+        config.decision_rendered_max_chars = 5000;
+        request.detail.body_md = "界".repeat(4500);
+        assert!(render_confirmation_with_config(&request, "7F32", "Codex", None, &config,).is_ok());
     }
 
     #[test]
@@ -1226,11 +1414,24 @@ mod tests {
 
         bounded.choices.push(ConfirmChoice {
             id: "fourth".into(),
-            label,
+            label: label.clone(),
             description: String::new(),
             role: ActionRole::Default,
             variant: None,
         });
+        let rendered = render_confirmation(&bounded, "7F32", &source, None).unwrap();
+        assert_eq!(rendered.text.matches(&label).count(), 4);
+
+        for id in ["fifth", "sixth"] {
+            bounded.choices.push(ConfirmChoice {
+                id: id.into(),
+                label: label.clone(),
+                description: String::new(),
+                role: ActionRole::Default,
+                variant: None,
+            });
+        }
+        bounded.detail.body_md = "证".repeat(1000);
         assert_eq!(
             render_confirmation(&bounded, "7F32", &source, None),
             Err(UnsupportedReason::RenderedTextTooLong)

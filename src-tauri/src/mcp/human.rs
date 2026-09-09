@@ -94,6 +94,9 @@ pub struct AskHumanParams {
     pub source_agent: String,
     /// Compact decision question shown to the human.
     pub question: String,
+    /// Optional multiline evidence needed to make the decision.
+    #[serde(default)]
+    pub detail: Option<String>,
     /// Two to six choices with stable semantic identifiers.
     #[schemars(length(min = 2, max = 6))]
     pub choices: Vec<AskHumanChoice>,
@@ -316,7 +319,10 @@ fn build_confirm_task(params: AskHumanParams) -> Result<ConfirmTask, String> {
             context,
             detail: ConfirmDetail {
                 summary: question,
-                body_md: String::new(),
+                body_md: params
+                    .detail
+                    .map(|value| normalize_detail(&value))
+                    .unwrap_or_default(),
             },
             choices,
             presentation: ConfirmPresentation::SingleSelectSubmit {
@@ -394,6 +400,14 @@ fn required_compact(value: &str, field: &str) -> Result<String, String> {
     } else {
         Ok(value)
     }
+}
+
+fn normalize_detail(value: &str) -> String {
+    value
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .trim()
+        .to_string()
 }
 
 fn required_identifier(value: &str, field: &str) -> Result<String, String> {
@@ -502,6 +516,7 @@ mod tests {
             repository_path,
             source_agent: "Codex".into(),
             question: "Did it arrive?".into(),
+            detail: None,
             choices: vec![choice("received", "Received"), choice("failed", "Failed")],
             context: Some("MCP release candidate".into()),
             recommended_choice: Some("received".into()),
@@ -769,6 +784,7 @@ mod tests {
             [
                 "choices",
                 "context",
+                "detail",
                 "question",
                 "recommended_choice",
                 "repository_path",
@@ -932,6 +948,56 @@ mod tests {
         .unwrap();
         assert_eq!(rendered.text.lines().nth(1), Some("Codex · human-in-loop"));
         assert!(rendered.text.contains("1  Received [recommended]"));
+    }
+
+    #[test]
+    fn multiline_detail_maps_to_the_canonical_body_without_flattening() {
+        let mut arguments = valid_arguments();
+        arguments["detail"] = json!("  line A\r\nline B\r\rline C  ");
+        let params: AskHumanParams = serde_json::from_value(arguments).unwrap();
+        let task = build_confirm_task(params).unwrap();
+
+        assert_eq!(task.spec.detail.summary, "Did it arrive?");
+        assert_eq!(task.spec.detail.body_md, "line A\nline B\n\nline C");
+    }
+
+    #[test]
+    fn synthetic_wme_sized_multiline_detail_survives_mapping_and_imessage_rendering() {
+        const DETAIL: &str = concat!(
+            "进度\n当前进入合成审阅阶段，所有材料均为本测试专门编写，不对应任何真实论文、作者、数据集或生产结论。请根据下面的结构化证据判断卡片是否完整、清楚且适合在手机上阅读。\n\n",
+            "中文题目\n面向虚构循环水系统的多阶段模型审阅示例。本题目只用于验证长正文、中文字符、段落边界和五个稳定选项的传递，不承载科学主张。\n\n",
+            "研究对象\n对象是一个完全虚构的实验性水处理流程，包含进水区、反应区和回流区。设定的变量、采样频率与运行条件都是合成描述，目的是提供接近真实审阅卡的阅读密度，同时避免引入受许可限制的来源内容。\n\n",
+            "模型或计算方法\n使用一个假想的分区质量平衡框架，并以确定性的参数表和规则化计算步骤生成比较结果。这里不调用外部模型，不引用真实文献，也不声称数值具备工程意义；只检查正文能否跨行、跨段保持原样。\n\n",
+            "模型承担的作用\n模型在这个示例中仅负责组织观察量、候选解释和判定依据，使审阅者能够区分数据描述、计算假设与最终选择。任何选项都不会触发删除、发布、付款或真实环境变更。\n\n",
+            "与模型直接相关的关键结果\n合成结果显示三个阶段可被分别描述，段落标题仍位于独立行，中文标点与数字不会被压成一个长行；五个候选选择保持稳定语义编号，返回值应是稳定标识而不是手机上的位置数字。\n\n",
+            "判据提醒\n请只判断这条合成卡片的正文是否完整显示、换行是否保留、问题与选项是否清楚。不要据此推断任何真实科研结论；若正文缺失、被截断或段落合并，应选择需要修订或阻止继续。"
+        );
+        let count = DETAIL.chars().count();
+        assert!((600..=800).contains(&count), "fixture has {count} chars");
+
+        let mut arguments = valid_arguments();
+        arguments["detail"] = json!(DETAIL);
+        arguments["context"] = json!("合成审阅回归");
+        arguments["choices"] = json!([
+            {"id":"approve","label":"内容完整"},
+            {"id":"minor_revision","label":"小幅修订"},
+            {"id":"major_revision","label":"大幅修订"},
+            {"id":"insufficient_evidence","label":"证据不足"},
+            {"id":"stop","label":"停止继续"}
+        ]);
+        let params: AskHumanParams = serde_json::from_value(arguments).unwrap();
+        let task = build_confirm_task(params).unwrap();
+        assert_eq!(task.spec.detail.body_md, DETAIL);
+
+        let request = task
+            .spec
+            .into_request("synthetic-wme".into(), 1, 2)
+            .unwrap();
+        let rendered =
+            crate::channels::imessage::render_confirmation(&request, "7F32", &task.source, None)
+                .unwrap();
+        assert!(rendered.text.contains(DETAIL));
+        assert_eq!(rendered.choice_indices, vec![0, 1, 2, 3, 4]);
     }
 
     #[test]

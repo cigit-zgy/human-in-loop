@@ -621,4 +621,22 @@ mod tests {
         assert!(value.get("message").is_none());
         assert!(value.get("messageBody").is_none());
     }
+
+    #[test]
+    fn payload_diagnostic_contains_only_the_fixed_reason() {
+        let line = no_available_channel_line_at(
+            crate::daemon::request::ConfirmAvailability::new(
+                crate::daemon::request::AvailabilityReason::Unavailable,
+                crate::daemon::request::AvailabilityReason::Disabled,
+                crate::daemon::request::AvailabilityReason::DetailTooLong,
+            ),
+            123,
+            456,
+        )
+        .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(value["imessage"], "detail_too_long");
+        assert!(!line.contains("synthetic decision body marker"));
+        assert_eq!(value.as_object().unwrap().len(), 6);
+    }
 }

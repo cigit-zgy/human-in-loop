@@ -365,7 +365,9 @@ fn validate_request(
         | WorkerRequest::Automation { .. }
         | WorkerRequest::Restart { .. } => Ok(()),
         WorkerRequest::Notify { text, .. } => {
-            if text.is_empty() || text.chars().count() > super::imessage::MAX_RENDERED_CHARS {
+            if text.is_empty()
+                || text.chars().count() > super::imessage::MAX_NOTIFICATION_RENDERED_CHARS
+            {
                 Err(HealthState::MessagesUnavailable)
             } else {
                 Ok(())
@@ -379,6 +381,9 @@ fn validate_request(
             expires_at_ms,
             ..
         } => {
+            let rendered_max_chars = super::imessage::decision_budgets(channel)
+                .map_err(|_| HealthState::MessagesUnavailable)?
+                .rendered_max_chars();
             let unique = choice_indices
                 .iter()
                 .copied()
@@ -390,7 +395,7 @@ fn validate_request(
                     .bytes()
                     .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_lowercase())
                 || text.is_empty()
-                || text.chars().count() > super::imessage::MAX_RENDERED_CHARS
+                || text.chars().count() > rendered_max_chars
                 || !(2..=6).contains(&choice_indices.len())
                 || unique.len() != choice_indices.len()
                 || *expires_at_ms == 0
@@ -1403,6 +1408,7 @@ mod tests {
             identity_mode: IMessageIdentityMode::DistinctPeer,
             chat_id: None,
             chat_guid: String::new(),
+            ..IMessageChannelConfig::default()
         }
     }
 
@@ -1450,6 +1456,32 @@ mod tests {
         }
         assert_eq!(
             validate_request(&config, &channel("person@example.com"), &request),
+            Err(crate::channels::imessage::HealthState::MessagesUnavailable)
+        );
+    }
+
+    #[test]
+    fn worker_honors_the_validated_decision_rendered_budget_only_for_confirmations() {
+        let worker = WorkerConfig::new(501, 20, "bot@example.com", "person@example.com").unwrap();
+        let mut channel = channel("person@example.com");
+        channel.decision_detail_max_chars = 2000;
+        channel.decision_rendered_max_chars = 2600;
+        let confirmation = WorkerRequest::Confirm {
+            recipient: "person@example.com".into(),
+            request_id: "request-1".into(),
+            token: "7F32".into(),
+            text: "界".repeat(1501),
+            choice_indices: vec![0, 1],
+            expires_at_ms: 2_000,
+        };
+        assert!(validate_request(&worker, &channel, &confirmation).is_ok());
+
+        let notification = WorkerRequest::Notify {
+            recipient: "person@example.com".into(),
+            text: "界".repeat(701),
+        };
+        assert_eq!(
+            validate_request(&worker, &channel, &notification),
             Err(crate::channels::imessage::HealthState::MessagesUnavailable)
         );
     }

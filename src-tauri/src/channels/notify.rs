@@ -116,7 +116,7 @@ pub fn render(notification: &HumanNotification) -> Result<String, String> {
         lines.push(locator(value)?);
     }
     let text = lines.join("\n");
-    if text.chars().count() > imessage::MAX_RENDERED_CHARS {
+    if text.chars().count() > imessage::MAX_NOTIFICATION_RENDERED_CHARS {
         return Err("notification exceeds the 700-character compact surface".into());
     }
     Ok(text)

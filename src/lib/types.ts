@@ -717,6 +717,8 @@ export interface IMessageChannelConfig {
   identityMode: "distinct_peer" | "same_account";
   chatId: number | null;
   chatGuid: string;
+  decisionDetailMaxChars: number;
+  decisionRenderedMaxChars: number;
 }
 
 export interface ChannelsConfig {

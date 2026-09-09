@@ -136,10 +136,10 @@ fn mcp_reference_with_agent(_agent: Option<AgentKind>) -> String {
 **They MUST be followed exactly and completely under all circumstances.**
 
 - Use the `ask_human` tool provided by the human-in-loop MCP server for bounded structured human decisions. The same server also exposes `notify_human` for bounded notifications, not decisions.
-- Supply `source_agent`, one compact `question`, and 2–6 `choices`, each with a unique stable semantic `id` and compact `label`. Optional `context` contains only decision-relevant information; optional `recommended_choice` names one of those stable ids. An optional `request_id` identifies the request; otherwise the server generates one.
+- Supply `source_agent`, one compact `question`, and 2–6 `choices`, each with a unique stable semantic `id` and compact `label`. Optional multiline `detail` contains bounded substantive evidence and preserves meaningful line breaks; optional `context` is compact metadata, not a long-form body. Optional `recommended_choice` names one of the stable ids. An optional `request_id` identifies the request; otherwise the server generates one.
 - For every repository-associated decision, supply `repository_path`. The server resolves the canonical GitHub repository name locally; do not substitute a caller-invented display label. Omit this path only for a genuinely non-repository decision.
 - The call waits for one canonical result. Use `selected_choice_id` as the answer, not a displayed numeric option. A timeout, cancellation, or channel error is not human approval; do not proceed as if the human selected a choice.
-- Recipient identity and channel configuration stay local. Do not pass transport arguments, credentials, chat identity, files, or raw message data. Keep complete reports, logs, diffs, and longer material in the local task surface; the notification contains only what is required for a safe bounded choice.
+- Recipient identity and channel configuration stay local. Do not pass transport arguments, credentials, chat identity, files, or raw message data. Keep complete reports, logs, diffs, and unbounded material in the local task surface; `detail` contains only the evidence required for a safe bounded choice.
 - After context compaction, recover the last question and canonical result from this conversation's tool history. If that evidence is unavailable, do not infer an answer or replay a possibly completed request.
 </mandatory_interaction_protocol>
 
@@ -423,6 +423,7 @@ mod tests {
             for field in [
                 "source_agent",
                 "question",
+                "detail",
                 "choices",
                 "context",
                 "recommended_choice",

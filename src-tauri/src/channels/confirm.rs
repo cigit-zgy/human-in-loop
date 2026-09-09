@@ -618,15 +618,16 @@ async fn run_imessage(
             return;
         }
     };
-    let rendered = match imessage::render_confirmation(
+    let rendered = match imessage::render_confirmation_with_config(
         &entry.request,
         token,
         &entry.source,
         repository.as_deref(),
+        config,
     ) {
         Ok(rendered) => rendered,
         Err(reason) => {
-            fail(entry, channel, format!("unsupported: {reason:?}"));
+            fail(entry, channel, reason.diagnostic_reason());
             return;
         }
     };
@@ -1324,6 +1325,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn imessage_payload_rejection_reaches_no_channel_with_a_redacted_reason() {
+        for (body, config, expected) in [
+            (
+                "界".repeat(1001),
+                IMessageChannelConfig::default(),
+                "detail_too_long",
+            ),
+            (
+                "valid".into(),
+                IMessageChannelConfig {
+                    decision_detail_max_chars: 0,
+                    ..IMessageChannelConfig::default()
+                },
+                "invalid_decision_budget",
+            ),
+        ] {
+            let spec = ConfirmSpec {
+                title: "Synthetic payload validation".into(),
+                context: vec![],
+                detail: ConfirmDetail {
+                    summary: "Continue?".into(),
+                    body_md: body,
+                },
+                choices: vec![
+                    ConfirmChoice {
+                        id: "continue".into(),
+                        label: "Continue".into(),
+                        description: String::new(),
+                        role: crate::confirm::ActionRole::Primary,
+                        variant: None,
+                    },
+                    ConfirmChoice {
+                        id: "stop".into(),
+                        label: "Stop".into(),
+                        description: String::new(),
+                        role: crate::confirm::ActionRole::Destructive,
+                        variant: None,
+                    },
+                ],
+                presentation: ConfirmPresentation::SingleSelectSubmit {
+                    input: None,
+                    submit_label: "Submit".into(),
+                    default_action_id: None,
+                },
+                dismiss_action_id: "stop".into(),
+                decision_image: None,
+            };
+            let (entry, mut outcome) = crate::daemon::request::create_internal_confirm(
+                spec,
+                "imessage",
+                "en",
+                "",
+                "Codex",
+                Duration::from_secs(60),
+            )
+            .unwrap();
+            entry.start_delivery("imessage");
+            run_imessage(&entry, &config, "7F32").await;
+            assert_eq!(entry.availability_snapshot().imessage(), expected);
+            assert_eq!(
+                outcome.recv().await,
+                Some(ConfirmOutcome::Fallback(
+                    ConfirmFallbackReason::NoAvailableChannel
+                ))
+            );
+        }
+    }
+
+    #[tokio::test]
     #[ignore = "requires an approved private recipient and a real same-account iPhone reply"]
     async fn live_same_account_imessage_round_trip() {
         let recipient = std::env::var("ASKHUMAN_IMESSAGE_E2E_RECIPIENT")
@@ -1385,6 +1455,7 @@ mod tests {
                 identity_mode: IMessageIdentityMode::SameAccount,
                 chat_id: None,
                 chat_guid: String::new(),
+                ..IMessageChannelConfig::default()
             },
         );
 
