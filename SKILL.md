@@ -16,7 +16,7 @@ Canonical maintained source:
 cigit-zgy/human-in-loop
 ```
 
-Current project design authority lives in `design/`. This Skill is the Codex-facing operational projection of `design/05_mcp_interface.md`, `design/06_codex_integration.md`, and the setup/recovery boundary in `design/07_macos_runtime_deployment.md`.
+Current project design authority lives in `design/`. This Skill is the Codex-facing operational projection of `design/05_mcp_interface.md`, `design/06_codex_integration.md`, `design/08_terminal_notification.md`, and the setup/recovery boundary in `design/07_macos_runtime_deployment.md`.
 
 ## Capability boundary
 
@@ -31,6 +31,21 @@ notify_human
 ```
 
 Never use `notify_human` as a substitute for a required decision. Never manufacture an acknowledgement choice merely to turn a notification into `ask_human`.
+
+By default, proactive messaging is intentionally sparse:
+
+```text
+unresolved semantic decision
+→ ask_human
+
+normal terminal task state
+→ at most one notify_human attempt
+
+ordinary progress / heartbeat / percentage-complete
+→ no proactive message
+```
+
+Progress notifications require explicit project/task/User opt-in. Do not infer them merely because a task is long-running.
 
 ## Determine whether a semantic human decision is required
 
@@ -81,7 +96,9 @@ SETUP_COMPLETE + normal operation
 → new Files & Folders prompts: 0
 ```
 
-If one of these reappears after setup without an actual host-state change, classify it as deployment regression/recovery evidence. Do not repeatedly invoke commands merely to trigger the same permission prompt again.
+A Mac reboot is not re-onboarding. If the dedicated Bot graphical/login session is absent after reboot, the only normal recovery action is to establish that Bot login session once. Existing Apple Account/Message activation, TCC grants, signing identity, channel configuration, MCP registration, and Skill configuration must not be redone merely because the machine rebooted.
+
+If one of these permissions or identities reappears as missing after setup without an actual host-state change, classify it as deployment regression/recovery evidence. Do not repeatedly invoke commands merely to trigger the same permission prompt again.
 
 A host step already authorized by the committed task does not need a second semantic `ask_human` choice just because macOS itself needs the User to enter a password or click a native consent control.
 
@@ -146,7 +163,7 @@ When host deployment rather than semantic choice blocks progress, do not create 
 
 ```text
 USER_CHECKPOINT:
-Log in once to the dedicated Bot macOS user after reboot, then return to the primary user.
+After a reboot, log in once to the dedicated Bot macOS user so its Messages session is active, then return to the primary user. Do not rerun onboarding or reconfigure TCC/Apple Account unless health explicitly shows that state was actually lost.
 ```
 
 or:
@@ -158,9 +175,9 @@ Open System Settings → Privacy & Security → Automation and enable Messages f
 
 After the User resolves it, continue the same still-valid task when semantics have not changed.
 
-## Terminal reporting — required attempt
+## Terminal reporting — one terminal message by default
 
-At every normal terminal task state:
+For every logical task execution reaching a normal terminal state:
 
 ```text
 PASS
@@ -169,7 +186,7 @@ BLOCKED
 FAIL
 ```
 
-attempt `notify_human` once the normal task result is already established.
+attempt `notify_human` at most once after the normal task result is already established.
 
 For repository-changing work, ordering is:
 
@@ -179,11 +196,21 @@ result/report complete
 → push owning branch
 → fresh fetch
 → required local HEAD == fetched upstream proof
-→ notify_human
+→ one terminal notify_human attempt
 → final Codex response
 ```
 
-The notification is compact: project, task id when available, verdict, one short summary/blocker, branch/commit/report locator when available.
+Do not send separate completion, report-ready, push-complete, release-complete, or other progress notifications for the same terminal event. Collapse materially useful facts into the single terminal message.
+
+The notification is compact: project, task id when available, verdict, one short summary/blocker, and durable locator when available. It may include up to two short context fields when materially useful.
+
+When a durable locator exists, keep it inside the same application message as the summary. Render HTTP(S) locators as a labeled raw URL line such as:
+
+```text
+Report: https://github.com/.../report
+```
+
+Do not send a separate link-only message. Keep the raw HTTP(S) URL intact so clients such as Apple Messages may auto-detect it as tappable. Do not rely on Markdown link syntax for plain iMessage rendering.
 
 Do not send complete reports, task bodies, private channel configuration, credentials, or long logs.
 
@@ -198,7 +225,7 @@ preserve underlying task verdict
 + surface HUMAN_NOTIFICATION: FAILED
 ```
 
-Do not convert a valid PASS into FAIL solely because notification transport failed. Do not wait indefinitely for acknowledgement.
+Do not convert a valid PASS into FAIL solely because notification transport failed. Do not wait indefinitely for acknowledgement. Do not retry an uncertain terminal delivery when a duplicate message could result.
 
 ## Authority / stale-copy rule
 
@@ -214,8 +241,11 @@ The human-in-loop contract is satisfied for a task when:
 all mandatory semantic checkpoints were resolved by correlated ask_human results or caused fail-closed BLOCKED state
 AND already-authorized routine work received no redundant semantic confirmation
 AND substantive evidence was preserved in the proper decision-body surface rather than silently truncated
+AND default progress-notification count remained zero unless explicitly opted in
+AND no more than one terminal notification attempt was made for the logical task execution
+AND any durable report/link locator remained in the same terminal application message
 AND host setup/recovery mechanics were consolidated instead of repeatedly prompted
+AND a reboot alone did not trigger re-onboarding or reconfiguration
 AND normal terminal truth was established honestly
-AND notify_human was attempted
 AND notification failure, if any, did not rewrite that truth
 ```
