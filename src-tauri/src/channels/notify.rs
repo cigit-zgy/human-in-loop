@@ -113,7 +113,7 @@ pub fn render(notification: &HumanNotification) -> Result<String, String> {
         lines.push(compact(&format!("{label}: {value}"), "context field", 80)?);
     }
     if let Some(value) = &notification.locator {
-        lines.push(locator(value)?);
+        lines.push(format!("Report: {}", locator(value)?));
     }
     let text = lines.join("\n");
     if text.chars().count() > imessage::MAX_NOTIFICATION_RENDERED_CHARS {
@@ -239,9 +239,21 @@ mod tests {
     #[test]
     fn compact_notification_preserves_all_fields_without_a_reply_surface() {
         let text = render(&notification()).unwrap();
-        assert_eq!(text, "[HIL · PASS_WITH_LIMITATIONS]\nCodex\nTASK-1\n\nCompleted with one limitation.\nScope: Local verification\nreports/codex/result.md");
+        assert_eq!(text, "[HIL · PASS_WITH_LIMITATIONS]\nCodex\nTASK-1\n\nCompleted with one limitation.\nScope: Local verification\nReport: reports/codex/result.md");
         assert!(!text.contains("Reply:"));
         assert!(!text.contains("1  "));
+    }
+
+    #[test]
+    fn http_report_locator_stays_raw_in_the_same_application_message() {
+        let mut notice = notification();
+        notice.locator =
+            Some("https://github.com/cigit-zgy/human-in-loop/blob/deadbeef/report.md".into());
+
+        let text = render(&notice).unwrap();
+
+        assert!(text.contains("Completed with one limitation.\nScope: Local verification\nReport: https://github.com/cigit-zgy/human-in-loop/blob/deadbeef/report.md"));
+        assert!(!text.contains("[https://"));
     }
 
     #[test]

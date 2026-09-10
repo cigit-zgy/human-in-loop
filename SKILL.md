@@ -16,7 +16,7 @@ Canonical maintained source:
 cigit-zgy/human-in-loop
 ```
 
-Current project design authority lives in `design/`. This Skill is the Codex-facing operational projection of `design/05_mcp_interface.md`, `design/06_codex_integration.md`, `design/08_terminal_notification.md`, and the setup/recovery boundary in `design/07_macos_runtime_deployment.md`.
+Current project design authority lives in `design/`. This Skill is the Codex-facing operational projection of `design/05_mcp_interface.md`, `design/06_codex_integration.md`, `design/08_terminal_notification.md`, `design/09_optional_bot_autologin.md`, and the setup/recovery boundary in `design/07_macos_runtime_deployment.md`.
 
 ## Capability boundary
 
@@ -101,6 +101,32 @@ A Mac reboot is not re-onboarding. If the dedicated Bot graphical/login session 
 If one of these permissions or identities reappears as missing after setup without an actual host-state change, classify it as deployment regression/recovery evidence. Do not repeatedly invoke commands merely to trigger the same permission prompt again.
 
 A host step already authorized by the committed task does not need a second semantic `ask_human` choice just because macOS itself needs the User to enter a password or click a native consent control.
+
+## Optional dedicated-Bot automatic login
+
+Automatic login is an opt-in setup convenience, never a normal-operation prompt or silent default.
+
+```text
+non-mutating feasibility preflight
+→ unsupported host: keep manual Bot login after reboot
+→ supported exact dedicated non-admin Bot: ask_human once
+→ enable_bot_autologin: open the supported native macOS configuration surface and verify afterward
+→ manual_bot_login: record the non-secret preference and keep the manual fallback
+```
+
+The decision request uses the stable choices `enable_bot_autologin` and `manual_bot_login`, states the physical-access trade-off, and has no recommended choice by default. A stable recorded choice is not asked again unless the User changes it or host capability materially changes.
+
+Only the configured dedicated non-admin Bot user may be targeted. Never target the primary user, an administrator, root, or an arbitrary caller-supplied account.
+
+FileVault, managed policy, or an incompatible account type makes automatic login unavailable. Keep setup valid and use this recovery path after a reboot:
+
+```text
+BOT_SESSION_LOGIN_REQUIRED
+→ User logs into the dedicated Bot user once
+→ User returns to the primary account
+```
+
+Never disable FileVault, weaken SIP/TCC, install a broad privileged helper, use a private loginwindow bypass, or capture a macOS/Apple password or 2FA secret. When macOS requires authentication, the User enters it only in the native macOS interface; human-in-loop reads and stores only the resulting non-secret configuration state.
 
 ## Mandatory semantic decision lifecycle
 

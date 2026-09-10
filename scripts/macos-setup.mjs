@@ -10,6 +10,19 @@ import { Client } from "./mcp-client.mjs";
 
 const SHARED_BINARY = "/Users/Shared/human-in-loop/bin/human-in-loop";
 const RECEIPT_NAME = "setup-qualification.json";
+const AUTOLOGIN_PREFERENCE_NAME = "bot-autologin.json";
+const CONFIGURED_BOT_USER = "human-in-loop";
+
+export const AUTOLOGIN_STATES = Object.freeze({
+  supported: "autologin_supported",
+  alreadyEnabledForBot: "autologin_already_enabled_for_bot",
+  disabledByUser: "autologin_disabled_by_user",
+  unavailableFileVault: "autologin_unavailable_filevault",
+  unavailableManagedPolicy: "autologin_unavailable_managed_policy",
+  unavailableAccountType: "autologin_unavailable_account_type",
+  nativeAuthRequired: "autologin_native_auth_required",
+  configurationFailed: "autologin_configuration_failed",
+});
 
 export function qualificationFingerprint(snapshot) {
   const material = {
@@ -91,6 +104,10 @@ function receiptPath(configPath) {
   return path.join(path.dirname(configPath), RECEIPT_NAME);
 }
 
+function autologinPreferencePath(configPath) {
+  return path.join(path.dirname(configPath), AUTOLOGIN_PREFERENCE_NAME);
+}
+
 function readReceipt(configPath) {
   const file = receiptPath(configPath);
   try {
@@ -102,15 +119,180 @@ function readReceipt(configPath) {
 }
 
 function writeReceipt(configPath, receipt) {
-  const file = receiptPath(configPath);
+  writePrivateJson(receiptPath(configPath), receipt);
+}
+
+function writePrivateJson(file, value) {
   const temporary = `${file}.next.${process.pid}`;
   try {
-    fs.writeFileSync(temporary, `${JSON.stringify(receipt)}\n`, { mode: 0o600, flag: "wx" });
+    fs.writeFileSync(temporary, `${JSON.stringify(value)}\n`, { mode: 0o600, flag: "wx" });
     fs.renameSync(temporary, file);
     fs.chmodSync(file, 0o600);
   } finally {
     if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
   }
+}
+
+function readAutologinPreference(configPath) {
+  try {
+    const file = autologinPreferencePath(configPath);
+    if ((fs.statSync(file).mode & 0o077) !== 0) return undefined;
+    const value = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (value?.version !== 1 || !["manual", "automatic"].includes(value.mode)) return undefined;
+    if (value.botUserName !== CONFIGURED_BOT_USER) return undefined;
+    return value;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeAutologinPreference(configPath, value) {
+  writePrivateJson(autologinPreferencePath(configPath), value);
+}
+
+export function classifyAutologin(snapshot, preference) {
+  if (!snapshot.configuredBot
+    || !snapshot.botExists
+    || snapshot.botIsAdmin
+    || !snapshot.botIsLocal
+    || snapshot.botUserName === "root"
+    || snapshot.botUserName === snapshot.currentUserName
+    || (snapshot.enabledUser && snapshot.enabledUser !== snapshot.botUserName)) {
+    return AUTOLOGIN_STATES.unavailableAccountType;
+  }
+  if (snapshot.fileVault === "on") return AUTOLOGIN_STATES.unavailableFileVault;
+  if (snapshot.managedPolicy) return AUTOLOGIN_STATES.unavailableManagedPolicy;
+  if (snapshot.fileVault !== "off") return AUTOLOGIN_STATES.configurationFailed;
+  if (preference?.mode === "manual" && preference.botUserName === snapshot.botUserName) {
+    return snapshot.enabledUser
+      ? AUTOLOGIN_STATES.configurationFailed
+      : AUTOLOGIN_STATES.disabledByUser;
+  }
+  if (snapshot.enabledUser === snapshot.botUserName) return AUTOLOGIN_STATES.alreadyEnabledForBot;
+  if (preference?.mode === "automatic" && preference.botUserName === snapshot.botUserName) {
+    return AUTOLOGIN_STATES.configurationFailed;
+  }
+  return AUTOLOGIN_STATES.supported;
+}
+
+export async function runAutologinFlow({ snapshot, preference, decide, persist, openSettings }) {
+  const state = classifyAutologin(snapshot, preference);
+  if (state === AUTOLOGIN_STATES.alreadyEnabledForBot
+    || state === AUTOLOGIN_STATES.disabledByUser
+    || state.startsWith("autologin_unavailable_")) {
+    return { state };
+  }
+  if (state === AUTOLOGIN_STATES.configurationFailed && preference?.mode !== "automatic") {
+    return { state };
+  }
+
+  let mode = preference?.mode;
+  if (!mode) {
+    const choice = await decide();
+    if (choice === "manual_bot_login") {
+      persist({ version: 1, mode: "manual", botUserName: snapshot.botUserName });
+      return { state: AUTOLOGIN_STATES.disabledByUser };
+    }
+    if (choice !== "enable_bot_autologin") {
+      return { state: AUTOLOGIN_STATES.configurationFailed };
+    }
+    mode = "automatic";
+    persist({ version: 1, mode, botUserName: snapshot.botUserName });
+  }
+
+  return {
+    state: openSettings() ? AUTOLOGIN_STATES.nativeAuthRequired : AUTOLOGIN_STATES.configurationFailed,
+  };
+}
+
+export function openAutologinSettings(runCommand = run) {
+  return runCommand("/usr/bin/open", [
+    "/System/Library/PreferencePanes/Accounts.prefPane",
+  ]).status === 0;
+}
+
+export function collectAutologinSnapshot({ botUserName }, runCommand = run) {
+  const value = (program, args) => {
+    const result = runCommand(program, args);
+    return result.status === 0 ? output(result).split("\n").at(-1)?.trim() ?? "" : "";
+  };
+  const currentUserName = value("/usr/bin/id", ["-un"]);
+  const botIdentity = runCommand("/usr/bin/id", ["-u", botUserName]);
+  const botGroups = value("/usr/bin/id", ["-Gn", botUserName]).split(/\s+/).filter(Boolean);
+  const localAccount = runCommand("/usr/bin/dscl", [
+    "localhost",
+    "-read",
+    `/Local/Default/Users/${botUserName}`,
+    "NFSHomeDirectory",
+  ]);
+  const botHome = localAccount.status === 0
+    ? output(localAccount).split(/\s+/).at(-1) ?? ""
+    : "";
+  const fileVaultValue = value("/usr/bin/fdesetup", ["isactive"]);
+  const managedLoginWindow = runCommand("/usr/bin/defaults", [
+    "read",
+    "/Library/Managed Preferences/com.apple.loginwindow",
+  ]);
+  return {
+    configuredBot: botUserName === CONFIGURED_BOT_USER,
+    botUserName,
+    currentUserName,
+    botExists: botIdentity.status === 0,
+    botIsAdmin: botGroups.includes("admin"),
+    botIsLocal: botIdentity.status === 0 && localAccount.status === 0 && botHome.startsWith("/Users/"),
+    fileVault: fileVaultValue === "true" ? "on" : fileVaultValue === "false" ? "off" : "unknown",
+    managedPolicy: managedLoginWindow.status === 0,
+    enabledUser: value("/usr/bin/defaults", [
+      "read",
+      "/Library/Preferences/com.apple.loginwindow",
+      "autoLoginUser",
+    ]),
+  };
+}
+
+async function decideAutologin(options) {
+  const client = new Client({ binary: options.binary, cwd: options.repository, env: process.env });
+  try {
+    await client.initialize();
+    const request = client.ask({
+      repository_path: options.repository,
+      source_agent: "human-in-loop setup",
+      question: "Enable automatic login for the dedicated human-in-loop Bot user after Mac restart?",
+      detail: "This reduces post-reboot manual work, but anyone with physical access after restart may enter the Bot session. It applies only to the dedicated non-admin Bot user. human-in-loop will not disable FileVault, SIP, or TCC, and never captures macOS or Apple Account credentials.",
+      choices: [
+        { id: "enable_bot_autologin", label: "Enable automatic login" },
+        { id: "manual_bot_login", label: "Keep manual Bot login" },
+      ],
+      context: "Optional post-reboot Bot session convenience",
+    });
+    const response = await client.response(request, 15 * 60 * 1000);
+    assert(!response.error && response.result?.isError !== true, "automatic-login decision failed");
+    return response.result.structuredContent.selected_choice_id;
+  } finally {
+    await client.close("SIGTERM");
+  }
+}
+
+async function configureAutologin(options) {
+  const configPath = commandValue(options.binary, ["config", "path"]);
+  if (!path.isAbsolute(configPath)) throw new Error("canonical configuration path is unavailable");
+  const snapshot = collectAutologinSnapshot(options);
+  const result = await runAutologinFlow({
+    snapshot,
+    preference: readAutologinPreference(configPath),
+    decide: () => decideAutologin(options),
+    persist: (value) => writeAutologinPreference(configPath, value),
+    openSettings: () => openAutologinSettings(),
+  });
+  console.log(`Bot automatic login ${result.state}`);
+  if (result.state === AUTOLOGIN_STATES.nativeAuthRequired) {
+    console.error("USER_CHECKPOINT: AUTOLOGIN_NATIVE_AUTH_REQUIRED");
+    console.error("In System Settings → Users & Groups, select the dedicated human-in-loop Bot for automatic login and enter the required password only in the native macOS interface. Then rerun this command.");
+    process.exitCode = 3;
+  } else if (result.state === AUTOLOGIN_STATES.configurationFailed) {
+    process.exitCode = 1;
+  }
+  return result;
 }
 
 function collectSnapshot({ binary, botUserName }) {
@@ -161,9 +343,9 @@ function parseArgs(argv) {
     else if (argv[index] === "--repository") options.repository = value;
     else throw new Error(`unknown option: ${argv[index]}`);
   }
-  if (!["status", "qualify"].includes(options.action)) throw new Error("usage: macos-setup.mjs <status|qualify> [options]");
-  if (options.action === "qualify" && !path.isAbsolute(options.repository)) {
-    throw new Error("qualification requires an absolute --repository path");
+  if (!["status", "qualify", "autologin"].includes(options.action)) throw new Error("usage: macos-setup.mjs <status|qualify|autologin> [options]");
+  if (["qualify", "autologin"].includes(options.action) && !path.isAbsolute(options.repository)) {
+    throw new Error(`${options.action} requires an absolute --repository path`);
   }
   return options;
 }
@@ -208,6 +390,10 @@ async function qualify(options, snapshot) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  if (options.action === "autologin") {
+    await configureAutologin(options);
+    return;
+  }
   const snapshot = collectSnapshot(options);
   const result = options.action === "qualify"
     ? await qualify(options, snapshot)

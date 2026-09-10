@@ -346,6 +346,7 @@ try {
     for (const value of [terminalStatus, 'Codex', 'human-in-loop', args.summary, args.task_id, args.locator, 'Checks: Passed']) {
       assert(rendered.includes(value), 'notification must preserve compact status, identity, summary, task, locator, and context');
     }
+    assert(rendered.includes(`Report: ${args.locator}`), 'locator must stay in the same application message with its Report label');
     assert.equal(ready().length, watcherCount, 'notification must not start a decision reply watcher');
     assert.equal(lines('replies.jsonl').length, repliesBefore, 'notification completes without synthetic acknowledgement');
     assert.equal(sends(), before + 1);

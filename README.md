@@ -33,7 +33,9 @@ Codex / MCP
 The current accepted design lives under [`design/`](design/README.md); historical reasoning under `reports/concept/` never overrides it.
 
 Normal terminal task completion attempts one compact `notify_human` delivery.
-Periodic or progress notifications remain deferred in `v0.1.2`.
+Routine progress and heartbeat notifications are disabled by default. A terminal
+notification includes its durable locator as `Report: <raw URL or path>` inside
+the same application message.
 
 ## Production Apple Messages topology
 
@@ -68,27 +70,22 @@ Prerequisites are macOS, Rust/Cargo, Node.js with pnpm, and the external pinned
 `openclaw/imsg` 0.15.1 executable plus its companion
 `PhoneNumberKit_PhoneNumberKit.bundle` on `PATH`.
 
-1. Create a dedicated standard macOS Bot user named `human-in-loop`.
-2. Log into that user once and sign Messages.app into a separate Bot Apple Account.
-   Complete Apple Account credentials and 2FA only in Apple's UI, then leave that
-   graphical session logged in.
-3. Return to the primary user, open a terminal at this repository root, and run:
+1. Install human-in-loop and choose a maintained channel.
+2. For iMessage, create the dedicated standard Bot user, log into it once, and
+   connect Messages with a distinct Bot Apple Account. Enter Apple credentials
+   and 2FA only in Apple's UI.
+3. Return to the primary user and run the one setup flow from this repository:
 
    ```sh
    ./scripts/macos-bootstrap.sh
    ```
 
-4. Enter only the non-secret Bot sender and personal recipient iMessage handles
-   when the script requests them. On an unprepared host, authenticate the one
-   bounded administrator bootstrap once.
-5. If the command reports `SETUP_NEEDS_TCC_CONSENT`, grant Full Disk Access and
-   Automation → Messages to the final stable Bot worker in the Bot graphical
-   session, then rerun the same command.
-6. When prompted for the one initial qualification, lock the personal iPhone or
-   keep Messages out of the foreground, continue, and reply from the phone using
-   the generated token and option number.
-7. The readiness table reports `Setup COMPLETE` only after the live runtime,
-   iMessage-only route, notification presentation, and correlated reply all pass.
+4. Follow the single consolidated native macOS permission or authentication
+   checkpoint if one is unavoidable. When automatic login is supported, setup
+   offers one explicit choice between enabling it for the dedicated non-admin Bot
+   and keeping manual Bot login after reboot.
+5. Complete the one real notification/reply qualification. Setup then reports
+   `Setup COMPLETE`.
 
 The setup command never accepts an Apple Account password or 2FA code. Sender and
 recipient handles remain in owner-only local configuration and are not written to
@@ -107,7 +104,12 @@ new Automation prompts             0
 new Files & Folders prompts        0
 ```
 
-A repeated permission prompt is treated as a deployment regression or explicit recovery state, not normal UX. A real reboot remains a known lifecycle boundary: the dedicated Bot macOS login session must be re-established before Apple Messages can become ready again.
+A repeated permission prompt is treated as a deployment regression or explicit
+recovery state, not normal UX. A reboot is not re-onboarding: it never requires
+reinstalling human-in-loop or reconfiguring Apple Account, recipient, MCP, Skill,
+or healthy TCC grants. When FileVault, managed policy, account type, or User
+preference keeps automatic login off, log into the dedicated Bot user once after
+reboot and return to the primary account.
 
 See [`design/07_macos_runtime_deployment.md`](design/07_macos_runtime_deployment.md) for the canonical setup/permission lifecycle.
 
@@ -125,9 +127,9 @@ notify_human
 
 `ask_human` accepts a compact question, optional bounded multiline `detail`, and 2–6 choices with stable semantic IDs. Optional `context` remains compact metadata. Repository-associated requests supply `repository_path`; the server resolves the canonical GitHub repository slug locally. The result returns canonical `request_id`, `selected_choice_id`, and `source_channel_id`, not the phone's numeric option. Decision evidence is never silently truncated; invalid or oversized payloads fail closed.
 
-`notify_human` sends compact task/status information without creating a pending decision or waiting for acknowledgement.
-It is the default terminal-task reporting behavior; it is not a periodic or
-progress-notification mechanism in `v0.1.2`.
+`notify_human` sends compact task/status information without creating a pending
+decision or waiting for acknowledgement. One logical task attempts at most one
+terminal notification by default; routine progress notifications remain off.
 
 Recipient identity, channel credentials, Apple credentials, raw transport commands, generic file operations, and private Messages data are not MCP inputs. Configuration remains local. The interface exposes no public unauthenticated HTTP endpoint and does not use GitHub as a runtime message relay.
 

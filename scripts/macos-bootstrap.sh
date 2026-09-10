@@ -14,11 +14,11 @@ BOT_USER="human-in-loop"
 
 usage() {
   cat <<EOF
-Usage: $0 [--coordinator-user CURRENT_USER]
+Usage: $0
 
-One-time macOS setup and readiness qualification (default Bot user: human-in-loop).
-The coordinator defaults to the current primary user. Apple Account passwords and
-2FA remain exclusively in Apple/macOS UI and are never accepted by this script.
+One setup flow for the dedicated standard Bot user (default: human-in-loop),
+native macOS permissions, and final notification/reply qualification. Apple
+Account passwords and 2FA stay exclusively in Apple/macOS UI.
 EOF
 }
 
@@ -259,7 +259,11 @@ node "$SCRIPT_DIR/macos-setup.mjs" status --binary "$LOCAL_BINARY" \
   --bot-user "$BOT_USER" --repository "$REPO_ROOT"
 SETUP_STATUS=$?
 set -e
-[ "$SETUP_STATUS" -eq 0 ] && exit 0
+[ "$SETUP_STATUS" -eq 0 ] && {
+  node "$SCRIPT_DIR/macos-setup.mjs" autologin --binary "$LOCAL_BINARY" \
+    --bot-user "$BOT_USER" --repository "$REPO_ROOT"
+  exit 0
+}
 [ "$SETUP_STATUS" -eq 3 ] || exit "$SETUP_STATUS"
 
 AUTOMATION_STATE="$($LOCAL_BINARY imessage-worker automation status 2>/dev/null || true)"
@@ -276,6 +280,9 @@ case "$WORKER_STATE" in
     exit 3
     ;;
 esac
+
+node "$SCRIPT_DIR/macos-setup.mjs" autologin --binary "$LOCAL_BINARY" \
+  --bot-user "$BOT_USER" --repository "$REPO_ROOT"
 
 printf '准备进行一次真实 iMessage notification/reply qualification。锁定 iPhone 或保持 Messages 不在前台后，按 Return 继续：' >&2
 IFS= read -r _

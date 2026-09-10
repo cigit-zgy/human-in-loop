@@ -4,10 +4,15 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import {
+  AUTOLOGIN_STATES,
+  classifyAutologin,
+  collectAutologinSnapshot,
   createQualificationReceipt,
   deriveSetupState,
   isUserLoggedIn,
   qualificationFingerprint,
+  openAutologinSettings,
+  runAutologinFlow,
 } from "./macos-setup.mjs";
 
 const scripts = fileURLToPath(new URL("./", import.meta.url));
@@ -107,6 +112,165 @@ test("the public bootstrap defaults to the current primary user", () => {
 
   assert.equal(result.status, 0);
   assert.match(result.stdout, /Usage: .*macos-bootstrap\.sh/);
-  assert.match(result.stdout, /default Bot user: human-in-loop/);
-  assert.doesNotMatch(result.stdout, /--coordinator-user <short-name>/);
+  assert.match(result.stdout, /dedicated standard Bot user \(default: human-in-loop\)/);
+  assert.match(result.stdout, /one setup flow/i);
+  assert.doesNotMatch(result.stdout, /coordinator-user|MCP HOME|worker socket|LaunchAgent|chat GUID|imsg flags/);
+});
+
+const autologinReady = {
+  configuredBot: true,
+  botUserName: "human-in-loop",
+  currentUserName: "wenv",
+  botExists: true,
+  botIsAdmin: false,
+  botIsLocal: true,
+  fileVault: "off",
+  managedPolicy: false,
+  enabledUser: "",
+};
+
+test("automatic-login preflight classifies every required host state without mutation", () => {
+  assert.equal(classifyAutologin(autologinReady), AUTOLOGIN_STATES.supported);
+  assert.equal(
+    classifyAutologin({ ...autologinReady, enabledUser: "human-in-loop" }),
+    AUTOLOGIN_STATES.alreadyEnabledForBot,
+  );
+  assert.equal(
+    classifyAutologin(autologinReady, { version: 1, mode: "manual", botUserName: "human-in-loop" }),
+    AUTOLOGIN_STATES.disabledByUser,
+  );
+  assert.equal(
+    classifyAutologin({ ...autologinReady, fileVault: "on" }),
+    AUTOLOGIN_STATES.unavailableFileVault,
+  );
+  assert.equal(
+    classifyAutologin({ ...autologinReady, managedPolicy: true }),
+    AUTOLOGIN_STATES.unavailableManagedPolicy,
+  );
+  for (const snapshot of [
+    { ...autologinReady, configuredBot: false },
+    { ...autologinReady, botIsAdmin: true },
+    { ...autologinReady, botIsLocal: false },
+    { ...autologinReady, botUserName: "root" },
+    { ...autologinReady, botUserName: "wenv" },
+  ]) {
+    assert.equal(classifyAutologin(snapshot), AUTOLOGIN_STATES.unavailableAccountType);
+  }
+  assert.equal(
+    classifyAutologin(
+      autologinReady,
+      { version: 1, mode: "automatic", botUserName: "human-in-loop" },
+    ),
+    AUTOLOGIN_STATES.configurationFailed,
+  );
+  assert.equal(
+    classifyAutologin(
+      { ...autologinReady, enabledUser: "human-in-loop" },
+      { version: 1, mode: "manual", botUserName: "human-in-loop" },
+    ),
+    AUTOLOGIN_STATES.configurationFailed,
+  );
+});
+
+test("unsupported hosts never ask, open settings, persist a choice, or weaken FileVault", async () => {
+  const calls = [];
+  const result = await runAutologinFlow({
+    snapshot: { ...autologinReady, fileVault: "on" },
+    preference: undefined,
+    decide: async () => { calls.push("decide"); return "enable_bot_autologin"; },
+    persist: () => calls.push("persist"),
+    openSettings: () => { calls.push("open"); return true; },
+  });
+
+  assert.equal(result.state, AUTOLOGIN_STATES.unavailableFileVault);
+  assert.deepEqual(calls, []);
+});
+
+test("manual choice is persisted once and leaves post-reboot login manual", async () => {
+  const persisted = [];
+  const result = await runAutologinFlow({
+    snapshot: autologinReady,
+    preference: undefined,
+    decide: async () => "manual_bot_login",
+    persist: (value) => persisted.push(value),
+    openSettings: () => assert.fail("manual choice must not open System Settings"),
+  });
+
+  assert.equal(result.state, AUTOLOGIN_STATES.disabledByUser);
+  assert.deepEqual(persisted, [{ version: 1, mode: "manual", botUserName: "human-in-loop" }]);
+});
+
+test("enable choice uses only native System Settings and is not asked again after persistence", async () => {
+  const persisted = [];
+  let asks = 0;
+  let opens = 0;
+  const first = await runAutologinFlow({
+    snapshot: autologinReady,
+    preference: undefined,
+    decide: async () => { asks += 1; return "enable_bot_autologin"; },
+    persist: (value) => persisted.push(value),
+    openSettings: () => { opens += 1; return true; },
+  });
+  const second = await runAutologinFlow({
+    snapshot: autologinReady,
+    preference: persisted[0],
+    decide: async () => { asks += 1; return "manual_bot_login"; },
+    persist: (value) => persisted.push(value),
+    openSettings: () => { opens += 1; return true; },
+  });
+
+  assert.equal(first.state, AUTOLOGIN_STATES.nativeAuthRequired);
+  assert.equal(second.state, AUTOLOGIN_STATES.nativeAuthRequired);
+  assert.equal(asks, 1);
+  assert.equal(opens, 2);
+  assert.deepEqual(persisted[0], { version: 1, mode: "automatic", botUserName: "human-in-loop" });
+});
+
+test("verified Bot automatic login is idempotent and needs no decision or UI", async () => {
+  const calls = [];
+  const result = await runAutologinFlow({
+    snapshot: { ...autologinReady, enabledUser: "human-in-loop" },
+    preference: { version: 1, mode: "automatic", botUserName: "human-in-loop" },
+    decide: async () => { calls.push("decide"); return "enable_bot_autologin"; },
+    persist: () => calls.push("persist"),
+    openSettings: () => { calls.push("open"); return true; },
+  });
+
+  assert.equal(result.state, AUTOLOGIN_STATES.alreadyEnabledForBot);
+  assert.deepEqual(calls, []);
+});
+
+test("native authentication navigation opens only the public Users & Groups preference pane", () => {
+  const calls = [];
+  const opened = openAutologinSettings((program, args) => {
+    calls.push([program, args]);
+    return { status: 0 };
+  });
+
+  assert.equal(opened, true);
+  assert.deepEqual(calls, [[
+    "/usr/bin/open",
+    ["/System/Library/PreferencePanes/Accounts.prefPane"],
+  ]]);
+});
+
+test("local Bot detection uses the local directory node instead of a missing-attribute exit code", () => {
+  const fakeRun = (program, args) => {
+    const key = `${program} ${args.join(" ")}`;
+    const values = new Map([
+      ["/usr/bin/id -un", { status: 0, stdout: "wenv\n" }],
+      ["/usr/bin/id -u human-in-loop", { status: 0, stdout: "502\n" }],
+      ["/usr/bin/id -Gn human-in-loop", { status: 0, stdout: "staff everyone localaccounts\n" }],
+      ["/usr/bin/dscl localhost -read /Local/Default/Users/human-in-loop NFSHomeDirectory", { status: 0, stdout: "NFSHomeDirectory: /Users/human-in-loop\n" }],
+      ["/usr/bin/fdesetup isactive", { status: 0, stdout: "true\n" }],
+      ["/usr/bin/defaults read /Library/Managed Preferences/com.apple.loginwindow", { status: 1, stdout: "" }],
+      ["/usr/bin/defaults read /Library/Preferences/com.apple.loginwindow autoLoginUser", { status: 1, stdout: "" }],
+    ]);
+    return { stdout: "", stderr: "", ...values.get(key) };
+  };
+
+  const snapshot = collectAutologinSnapshot({ botUserName: "human-in-loop" }, fakeRun);
+
+  assert.equal(snapshot.botIsLocal, true);
+  assert.equal(classifyAutologin(snapshot), AUTOLOGIN_STATES.unavailableFileVault);
 });
