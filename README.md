@@ -4,18 +4,18 @@ A focused human-in-the-loop bridge for coding agents. The maintained remote deli
 
 The project originated by adapting the open-source architecture of [`Naituw/AskHuman`](https://github.com/Naituw/AskHuman) and reuses [`openclaw/imsg`](https://github.com/openclaw/imsg) as an external macOS transport dependency. AskHuman is not a maintained runtime dependency or product identity. Carrier messaging is deliberately excluded: no SMS, MMS, RCS, paid messaging gateway, or automatic carrier fallback is permitted.
 
-## v0.1.2 release
+## v0.1.3 release
 
-`v0.1.2` is a source-only compatibility release. It adds optional multiline
-`ask_human.detail` for substantive decision evidence while keeping `context`
-as compact metadata. iMessage defaults to 1,000 Unicode characters for detail
-and 1,500 for the complete confirmation; users may raise these limits up to
-the absolute 4,500/5,000-character safety ceilings. Oversized or invalid
-budgets fail closed without silent truncation and expose only fixed redacted
-reasons. Transport, Bot/TCC, no-SMS, daemon, notification, and the
-v0.1.1 canonical-HOME migration behavior remain unchanged. This release does
-not claim a notarized downloadable macOS installer or general binary
-distribution.
+`v0.1.3` is a source-only release of the headless, iMessage-only bridge. It
+retires legacy AskHuman tray startup and the upstream updater.
+Replies use decimal `TOKEN-OPTION` correlation, with bounded Bot-owned history
+catch-up retaining every original correlation check. Rich multiline decision
+bodies remain supported. Routine progress stays off; one compact terminal
+notification includes a quoted, tappable report locator qualified without a
+large Rich Link Preview. Dedicated-Bot automatic login remains opt-in.
+
+See the [v0.1.3 release notes](docs/release-notes/v0.1.3.md). This release does
+not provide a notarized installer or downloadable binary assets.
 
 The production macOS path has been qualified with a real distinct-account Apple Messages round trip:
 

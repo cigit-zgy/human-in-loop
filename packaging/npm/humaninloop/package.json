@@ -1,6 +1,6 @@
 {
   "name": "humaninloop",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Human-in-the-loop interaction tool with an iMessage-only Apple Messages channel.",
   "license": "MIT",
   "author": "cigit-zgy",
@@ -34,9 +34,9 @@
     "prompt"
   ],
   "optionalDependencies": {
-    "@humaninloop/darwin-arm64": "0.1.2",
-    "@humaninloop/darwin-x64": "0.1.2",
-    "@humaninloop/win32-x64": "0.1.2",
-    "@humaninloop/linux-x64": "0.1.2"
+    "@humaninloop/darwin-arm64": "0.1.3",
+    "@humaninloop/darwin-x64": "0.1.3",
+    "@humaninloop/win32-x64": "0.1.3",
+    "@humaninloop/linux-x64": "0.1.3"
   }
 }

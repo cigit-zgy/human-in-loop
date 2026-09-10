@@ -1,6 +1,6 @@
 [package]
 name = "humaninloop"
-version = "0.1.2"
+version = "0.1.3"
 description = "human-in-loop interaction tool (Rust + Tauri)"
 authors = ["cigit-zgy"]
 license = "MIT"
