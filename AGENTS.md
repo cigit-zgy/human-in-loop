@@ -2,7 +2,7 @@
 
 ## Identity
 
-This repository is the maintained human-in-the-loop bridge for coding agents. The maintained remote delivery surfaces are intentionally limited to Feishu and Apple Messages using iMessage only.
+This repository is the maintained human-in-the-loop bridge for coding agents. The maintained remote delivery surface is Apple Messages using iMessage only.
 
 The maintained production identity is `human-in-loop`. AskHuman is upstream provenance/code history, not an installed runtime or product identity.
 
@@ -51,7 +51,7 @@ reports/concept/            chronological design history/input
 reports/chatgpt/            committed FORMAL task authority
 reports/codex/              Codex execution/verification evidence
 src-tauri/src/models.rs     canonical request/result data model
-src-tauri/src/channels/     channel implementations
+src-tauri/src/channels/     maintained iMessage channel and shared canonical channel logic
 src-tauri/src/mcp/          public MCP ask_human / notify_human surface
 scripts/                    installation/bootstrap/deployment projection
 ```
@@ -138,11 +138,13 @@ Do not call `ask_human` merely to reconfirm merge, tag, version publication, or 
 
 ## Hard invariants
 
-- Exactly two maintained remote delivery channels: `feishu`, `imessage`.
+- Exactly one maintained remote delivery channel: `imessage`.
+- Feishu is not a maintained capability and must not remain in current runtime/config/UI/dispatch/secret-loading surfaces.
 - No Telegram, Slack, DingTalk, WeChat, SMS, MMS, RCS, paid gateway, or automatic carrier fallback.
-- Canonical confirmation semantics are transport-independent.
+- Canonical confirmation semantics remain transport-independent even though only one maintained remote transport exists.
 - iMessage direct sends always use explicit iMessage selection and defense-in-depth no-SMS fallback.
 - `openclaw/imsg` remains external.
 - `design/` contains exactly one current accepted design set; no old/draft/versioned alternatives.
 - Stable installed runtime identity is required before macOS privacy grants are qualified.
 - `SETUP_COMPLETE` normal operation requires no recurring password, user-switch, or TCC consent interaction.
+- Historical reports and Git history are audit evidence and are not rewritten solely to erase retired Feishu references.
