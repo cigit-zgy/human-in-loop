@@ -143,15 +143,13 @@ For HTTP(S) locators, choose a plain-text wrapper that satisfies, in priority or
 4. full locator remains human-readable/copyable
 ```
 
-The initial preferred candidate is a quoted raw URL:
+The qualified and accepted wrapper is a quoted raw URL:
 
 ```text
 Report: "https://github.com/..."
 ```
 
-If the qualified current Messages client still renders a Rich Link Preview or no longer makes the URL tappable, test at most one compact fallback form chosen from ordinary text wrappers such as bracket/angle-bracket presentation. Do not mutilate the URL with zero-width characters or inserted spaces merely to defeat preview if that destroys reliable copying/navigation.
-
-The final accepted wrapper must be frozen in `08_terminal_notification.md` and implementation tests after real phone qualification.
+Real-phone qualification observed one ordinary application message, no large Rich Link Preview, successful tap navigation, and an intact readable/copyable URL. This wrapper is frozen in `08_terminal_notification.md` and implementation tests. A future platform regression must be reported rather than worked around with zero-width characters, inserted spaces, a private API, or a second message.
 
 For non-HTTP(S) durable locators, keep the ordinary semantic form without link-preview workarounds:
 

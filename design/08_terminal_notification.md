@@ -80,7 +80,7 @@ Do not include complete reports, long logs, credentials, private transport ident
 
 A locator belongs to the same application message as the terminal summary. Never send a second link-only iMessage merely to expose the report URL.
 
-For an HTTP(S) locator, initially render the unchanged URL inside the preferred
+For an HTTP(S) locator, render the unchanged URL inside the qualified
 ordinary-text wrapper in the same message:
 
 ```text
@@ -95,9 +95,9 @@ Report: reports/codex/260910_codex_01.md
 
 `Report:` and the wrapper are presentation text; the underlying MCP field remains `locator`. Maintained renderers may localize the label when a stable locale is available, but must not alter any character of the locator itself.
 
-Keep the HTTP(S) URL intact inside the wrapper so Apple Messages and other clients may still data-detect it as a tappable link. Do not rely on Markdown link syntax because plain iMessage text does not guarantee Markdown rendering.
+Keep the HTTP(S) URL intact inside the wrapper so Apple Messages and other clients may still data-detect it as a tappable link. The qualified iPhone presentation suppresses the large Rich Link Preview while preserving tap navigation and a complete readable/copyable locator. Do not rely on Markdown link syntax because plain iMessage text does not guarantee Markdown rendering.
 
-The qualified phone must not expand the locator into a large Apple Rich Link Preview. If the preferred quoted wrapper fails visual qualification, test at most one ordinary-text fallback wrapper. If no wrapper preserves both preview suppression and tap detection, prioritize a fully readable/copyable no-preview locator and record tap behavior as a platform limitation. Never insert zero-width characters or spaces into the URL.
+The quoted wrapper is the accepted form. Future platform regressions must fail the visual gate rather than silently changing the wrapper or inserting zero-width characters or spaces into the URL.
 
 # Non-regression boundary
 
