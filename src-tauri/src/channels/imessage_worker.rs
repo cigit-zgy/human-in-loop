@@ -262,6 +262,10 @@ fn lookup_gid(username: &str) -> Result<u32, String> {
     deny_unknown_fields
 )]
 pub enum WorkerRequest {
+    DiagnoseHistory {
+        recipient: String,
+        locator: String,
+    },
     Health {
         recipient: String,
     },
@@ -294,13 +298,24 @@ pub enum WorkerRequest {
     deny_unknown_fields
 )]
 pub enum WorkerResponse {
-    Health { state: String },
+    HistoryDiagnosis {
+        diagnosis: crate::channels::imessage::HistoryDiagnosis,
+    },
+    Health {
+        state: String,
+    },
     Ready,
-    Answer { choice_index: usize },
+    Answer {
+        choice_index: usize,
+    },
     Sent,
-    Automation { state: String },
+    Automation {
+        state: String,
+    },
     Restarting,
-    Error { state: String },
+    Error {
+        state: String,
+    },
 }
 
 pub const fn peer_allowed(expected_uid: u32, actual_uid: u32) -> bool {
@@ -324,7 +339,8 @@ pub fn admit_cross_user_image(
 
 fn request_recipient(request: &WorkerRequest) -> &str {
     match request {
-        WorkerRequest::Health { recipient }
+        WorkerRequest::DiagnoseHistory { recipient, .. }
+        | WorkerRequest::Health { recipient }
         | WorkerRequest::Confirm { recipient, .. }
         | WorkerRequest::Notify { recipient, .. }
         | WorkerRequest::Automation { recipient, .. }
@@ -361,6 +377,13 @@ fn validate_request(
     }
 
     match request {
+        WorkerRequest::DiagnoseHistory { locator, .. } => {
+            if super::imessage::valid_diagnostic_locator(locator) {
+                Ok(())
+            } else {
+                Err(HealthState::MessagesUnavailable)
+            }
+        }
         WorkerRequest::Health { .. }
         | WorkerRequest::Automation { .. }
         | WorkerRequest::Restart { .. } => Ok(()),
@@ -869,6 +892,20 @@ async fn handle_connection(
     }
 
     match request {
+        WorkerRequest::DiagnoseHistory { locator, .. } => {
+            let outcome = tokio::select! {
+                _ = connection_closed(&mut read) => return,
+                result = imessage::diagnose_history(&channel, &locator) => result,
+            };
+            match outcome {
+                Ok(diagnosis) => {
+                    let _ =
+                        write_frame(&mut write, &WorkerResponse::HistoryDiagnosis { diagnosis })
+                            .await;
+                }
+                Err(state) => write_error(&mut write, state).await,
+            }
+        }
         WorkerRequest::Health { .. } => {
             let automation = automation_preflight_async(false).await;
             let channel_state = if automation == HealthState::AutomationReady {
@@ -961,34 +998,15 @@ async fn handle_connection(
                 expires_at_ms,
             );
             let mut failed = None;
-            loop {
-                tokio::select! {
-                    _ = connection_closed(&mut read) => break,
-                    message = imessage::read_inbound_line(&mut inbound) => match message {
-                        Ok(Some(message)) => {
-                            let Some(reply) = pending.resolve(
-                                &message,
-                                imessage::unix_millis(std::time::SystemTime::now()),
-                            ) else {
-                                continue;
-                            };
-                            if reply.request_id == request_id {
-                                let _ = write_frame(
-                                    &mut write,
-                                    &WorkerResponse::Answer {
-                                        choice_index: reply.choice_index,
-                                    },
-                                )
-                                .await;
-                                break;
-                            }
-                        }
-                        Ok(None) => {}
-                        Err(_) => {
-                            failed = Some(HealthState::WatchFailed);
-                            break;
-                        }
+            tokio::select! {
+                _ = connection_closed(&mut read) => {},
+                outcome = imessage::wait_correlated_reply(&mut inbound, &mut pending,
+                    resolved.chat.id, expires_at_ms) => match outcome {
+                    Ok(reply) if reply.request_id == request_id => {
+                        let _ = write_frame(&mut write, &WorkerResponse::Answer { choice_index: reply.choice_index }).await;
                     }
+                    Ok(_) => failed = Some(HealthState::WatchFailed),
+                    Err(state) => failed = Some(state),
                 }
             }
             let _ = child.kill().await;
@@ -1127,6 +1145,21 @@ pub fn dispatch(args: &[String]) -> Result<String, String> {
             crate::cli::cfgio::block_on(serve())?;
             Ok(String::new())
         }
+        Some("diagnose-history") if args.len() == 2 => {
+            if !super::imessage::valid_diagnostic_locator(&args[1]) { return Err("invalid diagnostic locator".into()); }
+            let config = crate::config::AppConfig::load_without_secrets();
+            crate::cli::cfgio::block_on(async {
+                let mut client = WorkerClient::connect().await.map_err(|state| state.as_str().to_string())?;
+                client.send(&WorkerRequest::DiagnoseHistory {
+                    recipient: config.channels.imessage.recipient, locator: args[1].clone(),
+                }).await?;
+                match tokio::time::timeout(std::time::Duration::from_secs(110), client.next()).await {
+                    Ok(Ok(WorkerResponse::HistoryDiagnosis { diagnosis })) => serde_json::to_string(&diagnosis).map_err(|_| "diagnostic encoding failed".into()),
+                    Ok(Ok(WorkerResponse::Error { state })) => Err(state),
+                    _ => Err("history diagnostic unavailable".into()),
+                }
+            })
+        }
         Some("status") if args.len() == 1 => {
             let config = crate::config::AppConfig::load_without_secrets();
             let state = crate::cli::cfgio::block_on(health(&config.channels.imessage));
@@ -1146,7 +1179,7 @@ pub fn dispatch(args: &[String]) -> Result<String, String> {
             Ok(state.as_str().to_string())
         }
         _ => Err(
-            "usage: imessage-worker <install --coordinator-user <short-name> [--config-stdin] [--defer-start]|run|status|restart|automation <status|request>>".into(),
+            "usage: imessage-worker <install --coordinator-user <short-name> [--config-stdin] [--defer-start]|run|status|restart|diagnose-history <immutable-task-url>|automation <status|request>>".into(),
         ),
     }
 }

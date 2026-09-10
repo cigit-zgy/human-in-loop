@@ -242,11 +242,20 @@ pub fn install_kind_from_path(path: &str) -> InstallKind {
 }
 
 /// 按安装方式选择更新器。
-pub fn select_updater() -> Box<dyn Updater> {
-    match detect_install_kind() {
-        InstallKind::Npm => Box::new(npm::NpmUpdater::new()),
-        InstallKind::Direct => Box::new(direct::DirectUpdater::new()),
+// Historical updater implementations remain for provenance, never production selection.
+struct RetiredUpdater;
+#[async_trait::async_trait]
+impl Updater for RetiredUpdater {
+    async fn check_latest(&self, _fresh: bool) -> Result<RemoteLatest> {
+        anyhow::bail!("legacy AskHuman updater is retired")
     }
+    async fn apply(&self, _progress: Option<ProgressCb>) -> Result<()> {
+        anyhow::bail!("legacy AskHuman updater is retired")
+    }
+}
+
+pub fn select_updater() -> Box<dyn Updater> {
+    Box::new(RetiredUpdater)
 }
 
 /// 完整检查：查远端最新版 + 与本地比较，返回对外结果。
@@ -393,6 +402,12 @@ pub(crate) fn github_api_url(path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn production_updater_cannot_check_or_apply_upstream() {
+        assert!(super::select_updater().check_latest(true).await.is_err());
+        assert!(super::select_updater().apply(None).await.is_err());
+    }
+
     use super::*;
 
     #[test]

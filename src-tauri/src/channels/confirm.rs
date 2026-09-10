@@ -620,25 +620,14 @@ async fn run_imessage(
         entry.request.expires_at_ms,
     );
     let mut watch_failed = false;
-    loop {
-        tokio::select! {
-            _ = entry.cancel.notified() => break,
-            inbound = imessage::read_inbound_line(&mut reader) => match inbound {
-                Ok(Some(message)) => {
-                    let Some(reply) = pending.resolve(&message, imessage::unix_millis(std::time::SystemTime::now())) else {
-                        continue;
-                    };
-                    if reply.request_id == entry.request_id {
-                        let _ = entry.coordinator.submit_wire(reply.choice_index, None, channel);
-                        break;
-                    }
-                }
-                Ok(None) => {}
-                Err(_) => {
-                    watch_failed = true;
-                    break;
-                }
+    tokio::select! {
+        _ = entry.cancel.notified() => {},
+        outcome = imessage::wait_correlated_reply(&mut reader, &mut pending,
+            resolved.chat.id, entry.request.expires_at_ms) => match outcome {
+            Ok(reply) if reply.request_id == entry.request_id => {
+                let _ = entry.coordinator.submit_wire(reply.choice_index, None, channel);
             }
+            _ => watch_failed = true,
         }
     }
     let _ = child.kill().await;

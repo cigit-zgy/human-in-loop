@@ -118,6 +118,25 @@ reboot and return to the primary account.
 
 See [`design/07_macos_runtime_deployment.md`](design/07_macos_runtime_deployment.md) for the canonical setup/permission lifecycle.
 
+## Headless operation and inbound diagnosis
+
+The legacy menu-bar host and upstream updater are retired. The daemon, Codex MCP
+and dedicated Bot worker run without a persistent desktop application. Old
+`menuBarIcon` configuration is ignored and is not serialized.
+
+Before retrying a delivered but unanswered qualification, use
+`human-in-loop imessage-worker diagnose-history <immutable-task-url>`. The URL
+identifies the original synthetic request's quoted GitHub task locator. The
+worker inspects at most 200 records in its configured direct iMessage chat and
+returns only classification and counts. It never returns raw messages or
+completes a cancelled request. Missing or ambiguous evidence stays
+`INSUFFICIENT_EVIDENCE`.
+
+Live requests supplement watch with at most 60 history scans, five seconds
+apart, under the original request deadline. Both paths use the same strict
+correlation ledger; cancellation stops catch-up and reaps child processes.
+A history result is not permission to resend an unresolved production decision.
+
 ## Local MCP interface
 
 Configure an MCP client to launch the installed `human-in-loop` executable with the argument `mcp`. The local stdio server exposes two public tools:

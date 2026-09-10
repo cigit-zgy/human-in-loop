@@ -152,32 +152,18 @@ mod platform_impl {
     /// 后台拉起宿主进程（`AskHuman --gui-host`，detach 新会话脱离调用方终端）。
     /// 单实例由宿主自身的跨进程文件锁去重——重复 spawn 的多余进程会因抢锁失败而立即退出。
     pub fn spawn_detached() -> std::io::Result<()> {
-        let exe = std::env::current_exe()?;
-        spawn_detached_from(&exe)
+        spawn_detached_from(std::path::Path::new(""))
     }
 
     /// Start GUI Host from a caller-supplied stable disk path.
     ///
     /// The running executable can be replaced during self-update. In particular, Linux may then
     /// report `current_exe()` as a deleted inode path, so the old Host passes its launch path here.
-    pub fn spawn_detached_from(exe: &std::path::Path) -> std::io::Result<()> {
-        use std::process::{Command, Stdio};
-
-        let mut cmd = Command::new(exe);
-        cmd.arg("--gui-host")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        #[cfg(unix)]
-        unsafe {
-            use std::os::unix::process::CommandExt;
-            cmd.pre_exec(|| {
-                libc::setsid();
-                Ok(())
-            });
-        }
-        crate::daemon::spawn::configure_background(&mut cmd);
-        cmd.spawn().map(|_| ())
+    pub fn spawn_detached_from(_exe: &std::path::Path) -> std::io::Result<()> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "legacy GUI host is retired; human-in-loop runs headless",
+        ))
     }
 
     /// 把「打开窗口」请求路由到宿主（spec D3）。同步阻塞，内部在独立线程跑一个 current-thread

@@ -44,11 +44,11 @@ impl PopupAnimation {
 #[serde(rename_all = "lowercase")]
 pub enum MenuBarIconMode {
     /// Hide the icon while keeping the GUI host available on demand for singleton windows.
+    #[default]
     Off,
     /// Show the icon while the daemon is active and exit the host after the daemon becomes idle.
     Active,
     /// Keep the icon resident and launch it at login; show the stopped state when the daemon exits.
-    #[default]
     Always,
 }
 
@@ -169,7 +169,8 @@ pub struct GeneralConfig {
     /// macOS stores a sound name, such as "Glass"; Linux and Windows treat any non-empty
     /// value as enabled and play the platform notification sound.
     pub popup_sound: String,
-    /// Menu bar / tray icon mode (off/active/always, spec D4). Defaults to always.
+    /// Historical GUI source compatibility only; never read or serialized as configuration.
+    #[serde(skip)]
     pub menu_bar_icon: MenuBarIconMode,
     /// 弹窗预热（方案6）：daemon 常驻一个已挂载、隐藏待命的 `--popup --warm` 进程，来请求时直接喂
     /// `Show` 上屏（省掉 WebView 初始化 + 页面加载 + 挂载的关键路径开销）。默认开；可关（非实验项）。
@@ -205,7 +206,7 @@ impl Default for GeneralConfig {
             history_limit: default_history_limit(),
             todo_history_limit: default_todo_history_limit(),
             popup_sound: String::new(),
-            menu_bar_icon: MenuBarIconMode::Always,
+            menu_bar_icon: MenuBarIconMode::Off,
             popup_prewarm: true,
             daemon_lifecycle: DaemonLifecycleMode::Activity,
         }
@@ -557,7 +558,7 @@ mod tests {
         assert_eq!(c.general.speech_language, "auto");
         assert_eq!(c.general.speech_shortcut, "cmd+d");
         assert_eq!(c.general.history_limit, 200);
-        assert_eq!(c.general.menu_bar_icon, MenuBarIconMode::Always);
+        assert_eq!(c.general.menu_bar_icon, MenuBarIconMode::Off);
         assert!(c.general.popup_prewarm);
         assert_eq!(c.channels.popup.width, 560.0);
         assert_eq!(c.channels.popup.height, 620.0);
@@ -714,7 +715,7 @@ mod tests {
     }
 
     #[test]
-    fn menu_bar_icon_preserves_explicit_values_and_defaults_to_always() {
+    fn retired_menu_bar_settings_are_ignored() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("config.json");
 
@@ -724,21 +725,21 @@ mod tests {
 
         std::fs::write(&path, r#"{"general":{"menuBarIcon":"active"}}"#).unwrap();
         let c = AppConfig::load_from(&path);
-        assert_eq!(c.general.menu_bar_icon, MenuBarIconMode::Active);
+        assert_eq!(c.general.menu_bar_icon, MenuBarIconMode::Off);
 
         std::fs::write(&path, r#"{"general":{"menuBarIcon":"always"}}"#).unwrap();
         let c = AppConfig::load_from(&path);
-        assert_eq!(c.general.menu_bar_icon, MenuBarIconMode::Always);
+        assert_eq!(c.general.menu_bar_icon, MenuBarIconMode::Off);
 
         // A legacy config without the field adopts the new default.
         std::fs::write(&path, r#"{"general":{"theme":"dark"}}"#).unwrap();
         let c = AppConfig::load_from(&path);
-        assert_eq!(c.general.menu_bar_icon, MenuBarIconMode::Always);
+        assert_eq!(c.general.menu_bar_icon, MenuBarIconMode::Off);
 
         // An invalid enum value makes the config fall back to the complete default.
         std::fs::write(&path, r#"{"general":{"menuBarIcon":"bogus"}}"#).unwrap();
         let c = AppConfig::load_from(&path);
-        assert_eq!(c.general.menu_bar_icon, MenuBarIconMode::Always);
+        assert_eq!(c.general.menu_bar_icon, MenuBarIconMode::Off);
     }
 
     #[test]

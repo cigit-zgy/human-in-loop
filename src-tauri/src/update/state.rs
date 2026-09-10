@@ -31,7 +31,12 @@ fn now_secs() -> u64 {
 
 /// Read the current state. A missing or malformed file degrades to defaults.
 pub fn load() -> UpdateState {
-    load_at(&paths::update_state_file())
+    let mut state = load_at(&paths::update_state_file());
+    // Retired upstream cache cannot become a human-in-loop update offer.
+    state.latest_version.clear();
+    state.release_notes.clear();
+    state.checked_at = 0;
+    state
 }
 
 fn load_at(path: &Path) -> UpdateState {

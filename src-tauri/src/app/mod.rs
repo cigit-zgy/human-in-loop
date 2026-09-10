@@ -550,33 +550,9 @@ pub fn run_agents(config: AppConfig) -> ! {
 ///
 /// 抢宿主单实例锁失败（已有宿主）即直接退出；成功则进入 Tauri 事件循环常驻，
 /// 经自有 IPC 接收开窗请求、订阅 daemon 状态驱动托盘、监听配置热更新。
-pub fn run_gui_host(config: AppConfig) -> ! {
-    if !gui_host::acquire_singleton() {
-        // 已有宿主在跑（或锁被占）：本进程多余，直接退出。
-        std::process::exit(0);
-    }
-    let state = AppState {
-        interaction: InteractionRequest::Ask(AskRequest::new(
-            crate::models::MessagePrompt::default(),
-            Vec::new(),
-            false,
-        )),
-        popup_edit: None,
-        config,
-        source: crate::models::source_name(),
-        project: crate::project::detect(),
-        agent_kind: None,
-        agent_session_id: None,
-        mcp_instance_id: None,
-        agent_pid: None,
-        agent_console_session_id: None,
-        created_at_ms: 0,
-    };
-    if let Err(e) = launch(state, View::GuiHost, None) {
-        stderr_redirect::eprintln_real(&format!("askhuman gui-host failed: {}", e));
-        std::process::exit(1);
-    }
-    std::process::exit(0);
+pub fn run_gui_host(_config: AppConfig) -> ! {
+    stderr_redirect::eprintln_real("legacy GUI host is retired; human-in-loop runs headless");
+    std::process::exit(1);
 }
 
 /// GUI Helper 模式入口（`AskHuman --popup --endpoint <sock> --token <tok>`，由 Daemon 拉起）。

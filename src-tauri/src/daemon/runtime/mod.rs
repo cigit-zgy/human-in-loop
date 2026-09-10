@@ -944,18 +944,6 @@ async fn serve(_lock: LockGuard) -> i32 {
         }
     });
 
-    // 版本自更新：后台定期检查远端最新版（启动稍延迟一次，之后每 24h），有变化广播给弹窗。
-    {
-        let state = state.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_secs(20)).await;
-            loop {
-                check_for_update(&state).await;
-                tokio::time::sleep(Duration::from_secs(24 * 3600)).await;
-            }
-        });
-    }
-
     // 版本自更新：周期监听盘上二进制指纹（应用内更新 / 外部 npm 更新）→ 标记待生效并广播。
     {
         let state = state.clone();
@@ -1012,7 +1000,6 @@ async fn serve(_lock: LockGuard) -> i32 {
     }
 
     // 菜单栏图标已开启则兜底拉起 GUI 宿主（单实例去重；always 主要靠登录项）。
-    maybe_spawn_gui_host(&state.config.lock().unwrap().clone());
 
     // 方案6：daemon ready 后预热一个弹窗实例（self-gated：关 / 无显示则不补）。新 daemon / 二进制换新
     // 后的首个弹窗仍冷，但其余请求都能命中热实例。
@@ -2851,38 +2838,6 @@ async fn handle_gui_warm(mut reader: Reader, w: OwnedWriteHalf, state: &Arc<Serv
     maybe_topup_warm(state);
 }
 
-/// 菜单栏图标是否在当前平台被支持（用于 daemon 决定是否兜底拉起宿主）。
-/// macOS 恒真；Linux 仅在存在图形会话时（保守门控，headless 不拉宿主）。
-fn tray_supported() -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        true
-    }
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some()
-    }
-    #[cfg(windows)]
-    {
-        has_display()
-    }
-}
-
-/// 按配置兜底拉起 GUI 宿主（spec D14）：`menu_bar_icon != off` 且托盘可用时尝试 spawn。
-/// 单实例由宿主自身 flock 去重；always 主要靠登录项，此处为兜底。失败静默。
-fn maybe_spawn_gui_host(config: &AppConfig) {
-    use crate::config::MenuBarIconMode;
-    if config.general.menu_bar_icon == MenuBarIconMode::Off {
-        return;
-    }
-    if !tray_supported() {
-        return;
-    }
-    if let Err(e) = crate::gui_host::spawn_detached() {
-        log(&format!("failed to spawn gui-host: {}", e));
-    }
-}
-
 /// 等待 CLI 提交连接断开（提交后 CLI 不再发消息；任何 EOF/错误即视为断开）。
 async fn wait_cli_eof(reader: &mut Reader) {
     loop {
@@ -3831,7 +3786,6 @@ async fn on_config_changed(state: &Arc<ServerState>) {
         .registry
         .broadcast_to_guis(ServerMsg::ConfigChanged { general });
     // 配置变更可能刚开启菜单栏图标 → 兜底拉起宿主（宿主自身也监听配置，二者均幂等）。
-    maybe_spawn_gui_host(&new);
     // 方案6：弹窗预热开关随配置热切换——开则补热（self-gated），关则回收现有热实例。
     // window_effect 变更时也必须回收：热进程建窗材质在 spawn 时固化，
     // 待命期切到 Blur 若仍领用旧进程且上屏只挂玻璃，会半透明无材质。重建后按新效果 apply_surface。

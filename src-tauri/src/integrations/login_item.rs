@@ -279,11 +279,10 @@ fn remove_windows_launcher_if_unused() -> std::io::Result<()> {
 
 #[cfg(windows)]
 pub fn install() -> std::io::Result<()> {
-    if is_dev_instance_context() {
-        return Ok(());
-    }
-    ensure_windows_launcher()?;
-    windows_run::write(WINDOWS_GUI_VALUE, &windows_command("gui-host"))
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "legacy GUI login item is retired",
+    ))
 }
 
 #[cfg(windows)]
@@ -339,29 +338,10 @@ fn plist_contents(exe: &str) -> String {
 
 #[cfg(target_os = "macos")]
 pub fn install() -> std::io::Result<()> {
-    if is_dev_instance_context() {
-        return Ok(()); // dev 实例不触碰全局登录项（见 is_dev_instance_context 注释）。
-    }
-    let path = item_path();
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    std::fs::write(&path, plist_contents(&current_exe()))?;
-    // 先 bootout 旧实例（忽略错误），再 bootstrap 新的；失败回退 load -w。best-effort。
-    let domain = format!("gui/{}", unsafe { libc::getuid() });
-    let _ = run(
-        "launchctl",
-        &["bootout", &domain, &path.display().to_string()],
-    );
-    if run(
-        "launchctl",
-        &["bootstrap", &domain, &path.display().to_string()],
-    )
-    .is_err()
-    {
-        let _ = run("launchctl", &["load", "-w", &path.display().to_string()]);
-    }
-    Ok(())
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "legacy GUI login item is retired",
+    ))
 }
 
 #[cfg(target_os = "macos")]
@@ -408,14 +388,10 @@ Terminal=false\n"
 
 #[cfg(all(unix, not(target_os = "macos")))]
 pub fn install() -> std::io::Result<()> {
-    if is_dev_instance_context() {
-        return Ok(()); // dev 实例不触碰全局登录项（见 is_dev_instance_context 注释）。
-    }
-    let path = item_path();
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    std::fs::write(&path, desktop_contents(&current_exe()))
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "legacy GUI login item is retired",
+    ))
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]

@@ -263,6 +263,29 @@ try {
   await quiescent();
   check('same-account strict row/GUID/token/chat/option/reaction/attachment/outgoing rejection', { requests: 1, application_sends: 1, canonical_results: 1 });
 
+  setMode('watch_silent');
+  const catchupBefore = sends();
+  const catchup = await waiting(client, base('history-catchup'));
+  emit(reply(catchup, { chat_id: 43 }), reply(catchup, { text: `${catchup.token}-3` }),
+    reply(catchup, { id: catchup.record.id }), reply(catchup, { is_reaction: true }),
+    reply(catchup, { attachments: [{}] }), reply(catchup, { reply_to_guid: 'other-send' }));
+  await pause(5500);
+  assert(!client.responses.some(row => row.id === catchup.request.id));
+  emit(reply(catchup), reply(catchup, { id: catchup.record.id + 2, guid: 'duplicate-catchup' }));
+  result(await client.response(catchup.request), 'history-catchup');
+  await quiescent();
+  assert.equal(sends(), catchupBefore + 1);
+  assert.equal(client.responses.filter(row => row.id === catchup.request.id).length, 1);
+  check('silent watcher recovers only strictly correlated history and reaps every child');
+  const cancelledCatchup = await waiting(client, base('cancel-history-catchup'));
+  client.cancel(cancelledCatchup.request.id);
+  await quiescent();
+  emit(reply(cancelledCatchup));
+  await pause(100);
+  assert(!client.responses.some(row => row.id === cancelledCatchup.request.id && row.result?.structuredContent));
+  check('cancelled history catch-up cannot resurrect a canonical result');
+  setMode('wait');
+
   for (const mode of ['send_fail', 'watch_eof']) {
     setMode(mode);
     const before = sends();
@@ -459,8 +482,8 @@ try {
     synthetic_application_sends: sends(), canonical_results: structuredResults.filter((value) => value.selected_choice_id).length,
     notification_results: structuredResults.filter((value) => value.delivery_status).length,
     active_requests: (await status()).activeRequests, synthetic_processes_alive: liveFakePids().length };
-  assert.equal(summary.synthetic_application_sends, 30);
-  assert.equal(summary.canonical_results, 7);
+  assert.equal(summary.synthetic_application_sends, 32);
+  assert.equal(summary.canonical_results, 8);
   assert.equal(summary.notification_results, 9 + forcedStopResults);
   passed = true;
 } finally {

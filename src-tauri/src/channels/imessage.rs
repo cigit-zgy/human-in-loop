@@ -814,6 +814,130 @@ async fn history(chat_id: i64, limit: usize) -> Result<Vec<InboundMessage>, Heal
     parse_ndjson(&output.stdout)
 }
 
+/// Redacted evidence only: this never registers or completes a canonical request.
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HistoryDiagnosis {
+    pub classification: String,
+    pub outgoing_matches: usize,
+    pub reply_rows_present: usize,
+    pub scanned: usize,
+}
+
+pub fn valid_diagnostic_locator(value: &str) -> bool {
+    let Some(rest) = value.strip_prefix("https://github.com/cigit-zgy/human-in-loop/blob/") else {
+        return false;
+    };
+    let Some((revision, path)) = rest.split_once('/') else {
+        return false;
+    };
+    revision.len() == 40
+        && revision.bytes().all(|b| b.is_ascii_hexdigit())
+        && path.starts_with("reports/chatgpt/")
+        && path.ends_with(".md")
+        && path.len() < 80
+        && !path.contains("..")
+        && path
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"/_-.".contains(&b))
+}
+
+fn diagnose_rows(rows: &[InboundMessage], locator: &str, chat_id: i64) -> HistoryDiagnosis {
+    let outgoing: Vec<_> = rows
+        .iter()
+        .filter(|row| {
+            row.chat_id == chat_id
+                && row.is_from_me
+                && !row.is_reaction
+                && !row.has_attachments
+                && row
+                    .text
+                    .as_deref()
+                    .is_some_and(|text| text.contains(locator) && text.starts_with("[HIL · "))
+        })
+        .collect();
+    let mut result = HistoryDiagnosis {
+        classification: "INSUFFICIENT_EVIDENCE".into(),
+        outgoing_matches: outgoing.len(),
+        reply_rows_present: 0,
+        scanned: rows.len(),
+    };
+    let [sent] = outgoing.as_slice() else {
+        return result;
+    };
+    let text = sent.text.as_deref().unwrap_or_default();
+    let Some(token) = text
+        .lines()
+        .next()
+        .and_then(|line| line.strip_prefix("[HIL · "))
+        .and_then(|line| line.strip_suffix(']'))
+        .filter(|token| valid_token(token))
+    else {
+        return result;
+    };
+    if text.lines().last() != Some(format!("Reply: {token}-1").as_str()) {
+        return result;
+    }
+    let mut choices: Vec<_> = text
+        .lines()
+        .rev()
+        .skip(2)
+        .take_while(|line| !line.is_empty())
+        .collect();
+    choices.reverse();
+    if !(MIN_CHOICES..=MAX_CHOICES).contains(&choices.len())
+        || choices
+            .iter()
+            .enumerate()
+            .any(|(index, line)| !line.starts_with(&format!("{}  ", index + 1)))
+    {
+        return result;
+    }
+    // History is a bounded newest-first snapshot containing the identified send row.
+    // Every later row in this chat is therefore covered, even if older history is truncated.
+    if rows.windows(2).any(|pair| pair[0].id <= pair[1].id) || sent.guid.is_empty() {
+        return result;
+    }
+    result.reply_rows_present =
+        rows.iter()
+            .filter(|row| {
+                row.chat_id == chat_id
+                    && row.id > sent.id
+                    && !row.is_from_me
+                    && !row.is_reaction
+                    && !row.has_attachments
+                    && row.guid != sent.guid
+                    && row
+                        .reply_to_guid
+                        .as_deref()
+                        .is_none_or(|guid| guid == sent.guid)
+                    && row.text.as_deref().and_then(parse_reply).is_some_and(
+                        |(reply_token, option)| reply_token == token && option < choices.len(),
+                    )
+            })
+            .count();
+    result.classification = if result.reply_rows_present > 0 {
+        "HISTORY_ROW_PRESENT_WATCH_MISSED"
+    } else {
+        "HISTORY_ROW_STILL_ABSENT"
+    }
+    .into();
+    result
+}
+
+pub async fn diagnose_history(
+    config: &IMessageChannelConfig,
+    locator: &str,
+) -> Result<HistoryDiagnosis, HealthState> {
+    if !valid_diagnostic_locator(locator) {
+        return Err(HealthState::MessagesUnavailable);
+    }
+    let Readiness::Ready(chat) = prepare(config).await? else {
+        return Err(HealthState::BootstrapRequired);
+    };
+    let rows = history(chat.id, 200).await?;
+    Ok(diagnose_rows(&rows, locator, chat.id))
+}
+
 pub async fn pre_send_boundary(readiness: &Readiness) -> Result<PreSendBoundary, HealthState> {
     let latest_row_id = match readiness {
         Readiness::Ready(chat) => history(chat.id, 1).await?.first().map(|message| message.id),
@@ -1056,6 +1180,42 @@ fn spawn_watch_process(
     Ok((child, BufReader::new(stdout)))
 }
 
+/// Live watch plus a finite catch-up budget. Both paths use the same pending ledger.
+/// Lines::next_line preserves partial NDJSON across timer cancellation.
+pub async fn wait_correlated_reply(
+    reader: &mut BufReader<ChildStdout>,
+    pending: &mut PendingReplies,
+    chat_id: i64,
+    expires_at_ms: u64,
+) -> Result<CorrelatedReply, HealthState> {
+    let mut lines = reader.lines();
+    let mut tick = tokio::time::interval(Duration::from_secs(5));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut scans = 0;
+    let remaining = expires_at_ms.saturating_sub(unix_millis(SystemTime::now()));
+    let expiry = sleep(Duration::from_millis(remaining));
+    tokio::pin!(expiry);
+    loop {
+        tokio::select! {
+            biased;
+            _ = &mut expiry => return Err(HealthState::WatchFailed),
+            line = lines.next_line() => {
+                let line = line.map_err(|_| HealthState::WatchFailed)?.ok_or(HealthState::WatchFailed)?;
+                let message = serde_json::from_str(&line).map_err(|_| HealthState::WatchFailed)?;
+                if let Some(reply) = pending.resolve(&message, unix_millis(SystemTime::now())) { return Ok(reply); }
+            }
+            _ = tick.tick(), if scans < 60 => {
+                scans += 1;
+                let mut rows = history(chat_id, 200).await?;
+                rows.sort_by_key(|row| row.id);
+                for message in rows {
+                    if let Some(reply) = pending.resolve(&message, unix_millis(SystemTime::now())) { return Ok(reply); }
+                }
+            }
+        }
+    }
+}
+
 pub async fn read_inbound_line(
     reader: &mut BufReader<ChildStdout>,
 ) -> Result<Option<InboundMessage>, HealthState> {
@@ -1106,6 +1266,60 @@ mod tests {
         ConfirmRequest,
     };
     use std::time::{Duration, SystemTime};
+
+    #[test]
+    fn history_diagnosis_is_bounded_redacted_and_never_a_canonical_answer() {
+        let locator = "https://github.com/cigit-zgy/human-in-loop/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/reports/chatgpt/260910_chatgpt_04.md";
+        assert!(valid_diagnostic_locator(locator));
+        assert!(!valid_diagnostic_locator("file:///private/chat.db"));
+        let rendered = render_confirmation(&request(), "48273", "test", None).unwrap();
+        let body = rendered.text.replacen("\n", &format!("\n{locator}\n"), 1);
+        let sent = InboundMessage {
+            id: 10,
+            chat_id: 2,
+            guid: "sent".into(),
+            reply_to_guid: None,
+            created_at: String::new(),
+            is_from_me: true,
+            text: Some(body),
+            is_reaction: false,
+            has_attachments: false,
+        };
+        let mut reply = sent.clone();
+        reply.id = 11;
+        reply.guid = "reply".into();
+        reply.is_from_me = false;
+        reply.text = Some("48273-1".into());
+        assert_eq!(
+            diagnose_rows(std::slice::from_ref(&sent), locator, 2).classification,
+            "HISTORY_ROW_STILL_ABSENT"
+        );
+        let result = diagnose_rows(&[reply.clone(), sent.clone()], locator, 2);
+        assert_eq!(result.classification, "HISTORY_ROW_PRESENT_WATCH_MISSED");
+        assert_eq!(result.reply_rows_present, 1);
+        let encoded = serde_json::to_string(&result).unwrap();
+        assert!(!encoded.contains("48273"));
+        assert!(!encoded.contains("choice"));
+        reply.reply_to_guid = Some("other-send".into());
+        assert_eq!(
+            diagnose_rows(&[reply.clone(), sent.clone()], locator, 2).reply_rows_present,
+            0
+        );
+        reply.reply_to_guid = None;
+        reply.is_reaction = true;
+        assert_eq!(
+            diagnose_rows(&[reply.clone(), sent.clone()], locator, 2).reply_rows_present,
+            0
+        );
+        assert_eq!(
+            diagnose_rows(&[reply], locator, 2).classification,
+            "INSUFFICIENT_EVIDENCE"
+        );
+        assert_eq!(
+            diagnose_rows(&[sent.clone(), sent], locator, 2).classification,
+            "INSUFFICIENT_EVIDENCE"
+        );
+    }
 
     fn request() -> ConfirmRequest {
         ConfirmRequest {

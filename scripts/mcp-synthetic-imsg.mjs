@@ -25,7 +25,10 @@ if (command === '--version') {
   write({ id: 42, guid: 'synthetic-direct-chat', service: 'iMessage', is_group: false, participants: ['synthetic@example.invalid'] });
 } else if (command === 'history') {
   const sent = read('sent.jsonl');
-  write(sent.at(-1) ?? { id: 1, chat_id: 42, guid: 'synthetic-history', created_at: new Date(0).toISOString(), is_from_me: true, text: '' });
+  if (control().mode === 'watch_silent') {
+    const rows = [...sent, ...read('replies.jsonl')].sort((a,b) => b.id-a.id).slice(0, Number(value('--limit')));
+    for (const row of rows) write(row);
+  } else write(sent.at(-1) ?? { id: 1, chat_id: 42, guid: 'synthetic-history', created_at: new Date(0).toISOString(), is_from_me: true, text: '' });
 } else if (command === 'send') {
   assert.equal(value('--service'), 'imessage');
   assert(args.includes('--no-sms-fallback'));
@@ -72,7 +75,7 @@ if (command === '--version') {
     let offset = 0;
     setInterval(() => {
       const replies = read('replies.jsonl');
-      for (const row of replies.slice(offset)) write(row);
+      if (control().mode !== 'watch_silent') for (const row of replies.slice(offset)) write(row);
       offset = replies.length;
     }, 25);
   }
