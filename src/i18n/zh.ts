@@ -414,7 +414,7 @@ export default {
     },
     agentTasks: {
       title: "从 IM 创建 Agent 任务",
-      description: "在飞书中发送 /new，选择工作目录与 Agent，然后在新的系统终端窗口中继续这个可见会话。开启后会强制 Daemon 保活并安装登录项。",
+      description: "选择工作目录与 Agent，然后在新的系统终端窗口中继续这个可见会话。开启后会强制 Daemon 保活并安装登录项。",
       permission: "权限选择",
       permissionAsk: "每次询问",
       permissionDefault: "总是 Agent 默认",
@@ -477,15 +477,10 @@ export default {
       autoDetect: "自动识别",
       detecting: "识别中…",
       detectCancel: "取消",
-      feishuTitle: "飞书",
       recommendedBadge: "推荐",
       appId: "App ID",
       appSecret: "App Secret",
       openId: "Open ID",
-      feishuDetectHint: "请用目标飞书账号私聊机器人发送：{code}（120 秒内有效）",
-      feishuDetected: "已识别并填入 Open ID：{openId}",
-      feishuBaseUrl: "服务域名",
-      feishuBaseUrlPlaceholder: "留空使用飞书国内 open.feishu.cn；Lark 国际版填 open.larksuite.com",
       imessageTitle: "Apple 信息（仅 iMessage）",
       imessageDescription:
         "调用外部 imsg CLI，并始终关闭 SMS 回退；只投递有界的结构化确认。",
@@ -626,7 +621,6 @@ export default {
     channel: {
       popup: "弹窗",
       dingding: "钉钉",
-      feishu: "飞书",
       slack: "Slack",
       telegram: "Telegram",
       caller: "调用方",

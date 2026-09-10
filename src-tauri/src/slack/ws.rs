@@ -5,7 +5,7 @@
 //! 2. 连 wss；帧为 **JSON 文本**。业务帧 `events_api`（事件，如 `message`）/ `interactive`（交互，如
 //!    `block_actions`），各含 `envelope_id`；另有 `hello`（建连）、`disconnect`（要求重连）控制帧。
 //! 3. 每条含 `envelope_id` 的帧须 **3 秒内回 `{"envelope_id": id}`** ack。本实现**收帧即 ack**
-//!    （与卡片更新解耦：卡片更新走 Web API `chat.update`，不绑 3 秒窗口），比飞书延迟回包更简单。
+//!    （与卡片更新解耦：卡片更新走 Web API `chat.update`，不绑 3 秒窗口）。
 //! 4. WS 协议 Ping 回 Pong；`disconnect`/断开 → 重连（重新取 url）。
 
 use super::SlackError;

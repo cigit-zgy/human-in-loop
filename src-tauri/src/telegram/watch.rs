@@ -1,6 +1,6 @@
 //! `/watch` 实时状态卡的 Telegram 渲染（HTML 消息 + inline keyboard）。
 //!
-//! 与飞书卡片同一份 `WatchFrame` / 共享文案构件（`watch::header_text` 等），差异仅在标记语言：
+//! 与其他 legacy card transport 共享 `WatchFrame` / 文案构件（`watch::header_text` 等）。
 //! - 状态圆点用 emoji 🟢/⚪/🔴（无彩色字体）；类别词 `<b>` 加粗、参数 `<i>` 斜体。
 //! - TODO 只显示摘要行（用户定案：无折叠组件，不做展开）。
 //! - 终态：编辑为无按钮消息 + 末行终态标签（Telegram 不支持禁用按钮）。
@@ -20,7 +20,7 @@ pub const CB_REWATCH: &str = "watch:rewatch";
 pub fn render_watch_html(f: &WatchFrame, mode: CardMode, now: u64, lang: Lang) -> String {
     use super::markdown::escape_html as esc;
     let mut out = String::new();
-    // 头部行（斜体弱化，对应飞书蓝色小字）。
+    // 头部行使用斜体弱化。
     out.push_str(&format!(
         "🤖 <i>{}</i>\n",
         esc(&watch::header_text(f, lang))

@@ -22,7 +22,6 @@ fn fail(entry: &ConfirmEntry, channel: &str, reason: impl Into<String>) {
 fn source_name(channel: &str, lang: Lang) -> String {
     match channel {
         "popup" => i18n::tr(lang, "channel.sourcePopup"),
-        "feishu" => i18n::tr(lang, "channel.sourceFeishu"),
         "imessage" => "Apple Messages",
         "dingding" => i18n::tr(lang, "channel.sourceDingTalk"),
         "telegram" => i18n::tr(lang, "channel.sourceTelegram"),
@@ -104,37 +103,6 @@ fn final_status(entry: &ConfirmEntry, lang: Lang) -> String {
             Lang::En => "Channel unavailable".to_string(),
         },
     }
-}
-
-async fn keep_feishu_tombstone(
-    mut events: crate::feishu::router::RoutedFs,
-    client: crate::feishu::client::FeishuClient,
-    message_id: String,
-    target: String,
-    final_card: serde_json::Value,
-    deadline: tokio::time::Instant,
-) {
-    events.clear_loose(&target);
-    loop {
-        tokio::select! {
-            _ = tokio::time::sleep_until(deadline) => break,
-            inbound = events.recv() => match inbound {
-                Some(crate::feishu::router::FsInbound::Card { data, ack }) => {
-                    let actor = data.get("operator").and_then(|v| v.get("open_id")).and_then(serde_json::Value::as_str);
-                    let mid = data.get("context").and_then(|v| v.get("open_message_id")).and_then(serde_json::Value::as_str);
-                    if actor == Some(target.as_str()) && mid == Some(message_id.as_str()) {
-                        let _ = ack.send(Some(crate::feishu::card::callback_update_card(final_card.clone())));
-                        let _ = client.patch_card(&message_id, &final_card).await;
-                    } else {
-                        let _ = ack.send(None);
-                    }
-                }
-                Some(_) => {}
-                None => break,
-            }
-        }
-    }
-    events.clear_active(Some(&message_id), &target);
 }
 
 #[allow(clippy::too_many_arguments)] // one-shot task spawner; args mirror the tombstone card fields
@@ -457,115 +425,6 @@ pub fn start_dingtalk(
         let deadline = entry.deadline;
         drop(entry);
         keep_dingtalk_tombstone(events, client, out_track_id, target, status, deadline).await;
-    });
-}
-
-pub fn start_feishu(
-    entry: Arc<ConfirmEntry>,
-    config: crate::config::FeishuChannelConfig,
-    router: Arc<crate::feishu::router::FsRouter>,
-) {
-    tokio::spawn(async move {
-        let channel = "feishu";
-        let lang = Lang::resolve(&entry.lang);
-        let client = match crate::feishu::client::FeishuClient::new(&config) {
-            Ok(client) if !client.open_id().is_empty() => client,
-            Ok(_) => {
-                fail(&entry, channel, "missing target open_id");
-                return;
-            }
-            Err(error) => {
-                fail(&entry, channel, error.to_string());
-                return;
-            }
-        };
-        let target = client.open_id().to_string();
-        let mut events = router.register();
-        let mut selected = entry.request.choice_form_view().default_index;
-        let mut comment = String::new();
-        let initial = choice_cards::feishu_card(&entry.request, selected, &comment, lang);
-        let message_id =
-            match tokio::time::timeout(DELIVERY_TIMEOUT, client.send_card(&initial)).await {
-                Ok(Ok(message_id)) if !message_id.is_empty() => message_id,
-                Ok(Ok(_)) => {
-                    fail(&entry, channel, "empty Feishu message id");
-                    return;
-                }
-                Ok(Err(error)) => {
-                    fail(&entry, channel, error.to_string());
-                    return;
-                }
-                Err(_) => {
-                    fail(&entry, channel, "Feishu delivery timed out");
-                    return;
-                }
-            };
-        events.set_active(Some(&message_id), &target);
-        if !entry.mark_ready(channel, message_id.clone()) {
-            let final_card =
-                choice_cards::feishu_final_card(&entry.request, &final_status(&entry, lang), lang);
-            let _ = client.patch_card(&message_id, &final_card).await;
-            let deadline = entry.deadline;
-            drop(entry);
-            keep_feishu_tombstone(events, client, message_id, target, final_card, deadline).await;
-            return;
-        }
-
-        let mut disconnected = false;
-        loop {
-            tokio::select! {
-                _ = entry.cancel.notified() => break,
-                inbound = events.recv() => match inbound {
-                    Some(crate::feishu::router::FsInbound::Card { data, ack }) => {
-                        let input_id = entry.request.presentation.input().map(|input| input.id.as_str());
-                        match choice_cards::parse_feishu_action(&data, input_id) {
-                            Some(CardAction::Select { actor, message_id: mid, index, comment: draft })
-                                if actor == target && mid == message_id && index < entry.request.choices.len() =>
-                            {
-                                if let Some(draft) = draft { comment = draft; }
-                                selected = Some(index);
-                                let card = choice_cards::feishu_card(&entry.request, selected, &comment, lang);
-                                let _ = ack.send(Some(crate::feishu::card::callback_update_card(card)));
-                            }
-                            Some(CardAction::Submit { actor, message_id: mid, index: _, comment: submitted })
-                                if actor == target && mid == message_id =>
-                            {
-                                let Some(index) = selected else {
-                                    let _ = ack.send(None);
-                                    continue;
-                                };
-                                if let Some(value) = submitted {
-                                    comment = value;
-                                }
-                                match entry.coordinator.submit_wire(index, Some(comment.clone()), channel) {
-                                    Ok(_) => {
-                                        let final_card = choice_cards::feishu_final_card(&entry.request, &final_status(&entry, lang), lang);
-                                        let _ = ack.send(Some(crate::feishu::card::callback_update_card(final_card)));
-                                        break;
-                                    }
-                                    Err(_) => {
-                                        let card = choice_cards::feishu_card(&entry.request, selected, &comment, lang);
-                                        let _ = ack.send(Some(crate::feishu::card::callback_update_card(card)));
-                                    }
-                                }
-                            }
-                            _ => { let _ = ack.send(None); }
-                        }
-                    }
-                    Some(_) => {}
-                    None => { disconnected = true; break; }
-                }
-            }
-        }
-        if disconnected {
-            fail(&entry, channel, "Feishu router disconnected");
-        }
-        let final_card =
-            choice_cards::feishu_final_card(&entry.request, &final_status(&entry, lang), lang);
-        let _ = client.patch_card(&message_id, &final_card).await;
-        let deadline = entry.deadline;
-        drop(entry);
-        keep_feishu_tombstone(events, client, message_id, target, final_card, deadline).await;
     });
 }
 
@@ -1147,7 +1006,7 @@ mod tests {
     #[test]
     fn channel_names_are_localized_for_terminal_copy() {
         assert!(!source_name("popup", Lang::En).is_empty());
-        assert!(!source_name("feishu", Lang::Zh).is_empty());
+        assert!(!source_name("imessage", Lang::Zh).is_empty());
     }
 
     #[test]

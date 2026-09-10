@@ -1,23 +1,18 @@
 //! Channel-agnostic confirm card send/finalize transport.
 //!
-//! Dispatches to the four IM channel adapters (feishu/dingtalk/telegram/slack) for
+//! Dispatches to legacy interactive channel adapters for
 //! sending and finalizing double-action confirmation cards.  Callers pass the generic
 //! `ConfirmView` / `ConfirmFinalView` and a `channel_id` string; this module handles
 //! the per-platform rendering and API calls.
 
 use crate::config::AppConfig;
 use crate::confirm::{ConfirmFinalView, ConfirmView};
-/// Feishu callback ack sender type (used when finalizing via card callback response).
-pub type FsAck = crate::feishu::router::CardAck;
+/// Optional interactive-card callback acknowledgement.
+pub type CardAck = tokio::sync::oneshot::Sender<Option<serde_json::Value>>;
 
 /// Send a confirm card to the given channel.  Returns the platform message ID on success.
 pub async fn send(channel_id: &str, config: &AppConfig, view: &ConfirmView) -> Option<String> {
     match channel_id {
-        "feishu" => {
-            let client = crate::feishu::client::FeishuClient::new(&config.channels.feishu).ok()?;
-            let card = crate::feishu::card::build_confirm_card(view);
-            client.send_card(&card).await.ok()
-        }
         "dingding" => {
             let client =
                 crate::dingtalk::client::DingTalkClient::new(&config.channels.dingding).ok()?;
@@ -69,31 +64,15 @@ pub async fn send(channel_id: &str, config: &AppConfig, view: &ConfirmView) -> O
 
 /// Finalize (update) a confirm card to its terminal state.
 ///
-/// `ack` is an optional feishu callback oneshot — if present, the finalized card is
-/// sent as the callback response (avoiding a separate PATCH).  For other channels or
-/// when `ack` is None, we use the platform's edit/update API.
+/// `ack` is reserved for interactive callback transports.
 pub async fn finalize(
     channel_id: &str,
     config: &AppConfig,
     message_id: &str,
     final_view: &ConfirmFinalView,
-    ack: Option<FsAck>,
+    _ack: Option<CardAck>,
 ) {
     match channel_id {
-        "feishu" => {
-            let card = crate::feishu::card::build_confirm_final_card(
-                &final_view.title,
-                &final_view.body,
-                &final_view.label,
-            );
-            if let Some(ack) = ack {
-                let _ = ack.send(Some(crate::feishu::card::callback_update_card(card)));
-            } else if let Ok(client) =
-                crate::feishu::client::FeishuClient::new(&config.channels.feishu)
-            {
-                let _ = client.patch_card(message_id, &card).await;
-            }
-        }
         "telegram" => {
             let tg = &config.channels.telegram;
             if let (Ok(client), Ok(mid_i)) = (

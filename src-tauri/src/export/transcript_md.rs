@@ -1,4 +1,4 @@
-//! Pure Markdown transcript for Feishu preview.
+//! Pure Markdown transcript for legacy export compatibility.
 
 use crate::agents::transcript_full::{TranscriptDoc, TranscriptEvent};
 use crate::watch;

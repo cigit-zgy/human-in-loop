@@ -412,7 +412,7 @@ export interface HistoryEntry {
   agentSessionId?: string | null;
   /** AskHuman MCP server process id; a fallback partition when no native session is known. */
   mcpInstanceId?: string | null;
-  /** Channel that submitted / cancelled: popup / dingding / feishu / telegram. */
+  /** Channel that submitted or cancelled the request. */
   channel: string;
   action: ChannelAction;
   isMarkdown: boolean;
@@ -703,14 +703,6 @@ export interface PopupSoundSupport {
   names: string[];
 }
 
-export interface FeishuChannelConfig {
-  enabled: boolean;
-  appId: string;
-  appSecret: string;
-  openId: string;
-  baseUrl: string;
-}
-
 export interface IMessageChannelConfig {
   enabled: boolean;
   recipient: string;
@@ -722,7 +714,6 @@ export interface IMessageChannelConfig {
 }
 
 export interface ChannelsConfig {
-  feishu: FeishuChannelConfig;
   imessage: IMessageChannelConfig;
   /** 「IM 渠道按需发送」开关（默认关；显式配置的用户设置保持原值）。 */
   autoActivation: boolean;
@@ -781,20 +772,14 @@ export interface AppConfig {
   experimental: ExperimentalConfig;
 }
 
-/** Whether each channel secret is currently stored (drives the "Saved" placeholder). */
-export interface SecretsPresent {
-  feishuSecret: boolean;
-}
-
-/** Settings payload: config with secrets blanked + per-secret presence flags. */
+/** Settings payload. */
 export interface SettingsPayload {
   config: AppConfig;
-  secretsPresent: SecretsPresent;
 }
 
 /** 一条渠道故障摘要（R7，镜像 Rust `ipc::ChannelIssueInfo`）：出现即表示该渠道仍未恢复。 */
 export interface ChannelIssue {
-  /** 渠道 id："telegram" / "dingding" / "feishu" / "slack"。 */
+  /** Legacy interactive channel id. */
   channel: string;
   /** 错误文案（源语言英文，与 daemon.log 一致）。 */
   message: string;
@@ -858,16 +843,6 @@ export type PermissionRulesResult =
   | { kind: "summaries"; sessions: PermissionSessionGroup[]; globalCount: number }
   | { kind: "rules"; rules: PermissionRuleInfo[] }
   | { kind: "reset"; removed: number };
-
-/** Per-secret edit intent sent on save. Secrets never round-trip through the config object. */
-export type SecretAction =
-  | { kind: "unchanged" }
-  | { kind: "set"; value: string }
-  | { kind: "clear" };
-
-export interface SecretActions {
-  feishuSecret: SecretAction;
-}
 
 export interface HookStatus {
   installed: boolean;
@@ -996,26 +971,6 @@ export interface DingTalkDetectArgs {
 export interface DingTalkWaitArgs {
   clientId: string;
   clientSecret: string;
-  code: string;
-}
-
-export interface FeishuTestArgs {
-  appId: string;
-  appSecret: string;
-  openId: string;
-  baseUrl: string;
-}
-
-export interface FeishuDetectArgs {
-  appId: string;
-  appSecret: string;
-  baseUrl: string;
-}
-
-export interface FeishuWaitArgs {
-  appId: string;
-  appSecret: string;
-  baseUrl: string;
   code: string;
 }
 

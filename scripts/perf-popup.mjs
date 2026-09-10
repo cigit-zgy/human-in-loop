@@ -14,8 +14,8 @@
 // The canonical scenario, per run:
 //   * Throwaway $HOME -> its own daemon/socket/perf.log; never touches the user's real daemon, and
 //     ASKHUMAN_NO_KEYCHAIN keeps it from reading/clobbering the real OS keychain secrets.
-//   * Local mock IM (scripts/perf-mock-im.mjs) with all four channels enabled (DingTalk/Feishu/
-//     Telegram/Slack) pointed at it via config + ASKHUMAN_{DINGTALK,SLACK}_API_BASE. The mock adds
+//   * Local mock IM (scripts/perf-mock-im.mjs) with the legacy local popup harness channels
+//     pointed at it via config + ASKHUMAN_{DINGTALK,SLACK}_API_BASE. The mock adds
 //     ~150ms to every connect/send so an "IM blocks the popup" regression shows up in e2e.
 //   * Cold set  (daemon stopped before each run -> daemon cold start + IM reconnect every time;
 //                this is where the IM-on-path delay lands today),
@@ -145,7 +145,7 @@ function childEnv(home, urls) {
   };
 }
 
-/** Write the canonical config.json (all four channels enabled, pointed at the mock).
+/** Write the canonical config.json (legacy local harness channels enabled, pointed at the mock).
  *  `prewarm` toggles 方案6 popup prewarm: OFF for cold/warm (measure cold-spawn), ON for the hot set. */
 function writeCanonicalConfig(home, urls, prewarm) {
   const dir = join(home, ".askhuman");
@@ -156,7 +156,6 @@ function writeCanonicalConfig(home, urls, prewarm) {
       popup: { enabled: true },
       telegram: { enabled: true, botToken: "mock-bot", chatId: "1", apiBaseUrl: urls.telegram },
       dingding: { enabled: true, clientId: "mock-id", clientSecret: "mock-secret", userId: "u1" },
-      feishu: { enabled: true, appId: "cli_mock", appSecret: "mock-secret", openId: "ou_mock", baseUrl: urls.feishu },
       slack: { enabled: true, botToken: "xoxb-mock", appToken: "xapp-mock", userId: "U1" },
       autoActivation: false,
     },

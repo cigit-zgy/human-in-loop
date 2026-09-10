@@ -73,7 +73,7 @@ pub struct StatusInfo {
     pub uptime_secs: u64,
     pub socket: String,
     pub active_requests: usize,
-    /// 当前常热的 IM 长连接（"dingtalk" / "feishu" / "telegram" / "slack"），按已建连且存活计入。
+    /// 当前常热的 legacy interactive connections，按已建连且存活计入。
     #[serde(default)]
     pub im_connections: Vec<String>,
     /// 是否处于排空状态（旧 Daemon 回包缺字段 → false）。
@@ -89,7 +89,7 @@ pub struct StatusInfo {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChannelIssueInfo {
-    /// 渠道 id："telegram" / "dingding" / "feishu" / "slack"。
+    /// Redacted channel id.
     pub channel: String,
     /// 错误文案（源语言英文，与 daemon.log 一致）。
     pub message: String,
@@ -282,13 +282,13 @@ pub enum PermissionRulesResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DetectRequest {
-    /// 渠道类型："dingtalk" | "feishu" | "slack"。
+    /// Legacy detection channel type.
     pub kind: String,
-    /// 钉钉 client_id / 飞书 app_id / Slack App Token（也是「是否复用现有连接」的匹配键）。
+    /// Provider application key used to match an existing connection.
     pub app_key: String,
-    /// 钉钉 client_secret / 飞书 app_secret / Slack Bot Token。
+    /// Provider secret or Slack Bot Token.
     pub app_secret: String,
-    /// 飞书自定义 base_url（钉钉/Slack 忽略，可传空）。
+    /// Optional provider base URL.
     pub base_url: String,
     /// 用户需私聊发送的识别码。
     pub code: String,
@@ -730,7 +730,7 @@ pub enum ServerMsg {
         version: String,
         uptime_secs: u64,
         active_requests: usize,
-        /// 当前常热的 IM 长连接名（"dingtalk"/"feishu"/"telegram"/"slack"）。
+        /// Current live legacy interactive connection names.
         im_connections: Vec<String>,
         /// 是否处于排空（graceful drain）。
         draining: bool,
@@ -1099,7 +1099,7 @@ mod tests {
             version: "0.7.0".to_string(),
             uptime_secs: 42,
             active_requests: 1,
-            im_connections: vec!["feishu".to_string()],
+            im_connections: vec!["telegram".to_string()],
             draining: false,
             agents_working: 2,
             agents_idle: 3,

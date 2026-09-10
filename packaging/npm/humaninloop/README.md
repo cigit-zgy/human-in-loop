@@ -1,8 +1,7 @@
 # humaninloop
 
 Node wrapper for the independent **human-in-loop** project. The maintained
-remote channels are Feishu and Apple Messages with strict iMessage-only
-delivery.
+remote channel is Apple Messages with strict iMessage-only delivery.
 
 The repository's `v0.1.2` publication is a source release only; it does not
 publish or promise notarized downloadable binaries or an npm binary release.

@@ -629,7 +629,6 @@
   white-space: nowrap;
 }
 /* 外部 IM 渠道按推荐顺序展示；本地弹窗与引导卡保持在所有 IM 渠道之前。 */
-.channel-card-feishu { order: 10; }
 .channel-card-telegram { order: 20; }
 .channel-card-dingtalk { order: 30; }
 .channel-card-slack { order: 40; }

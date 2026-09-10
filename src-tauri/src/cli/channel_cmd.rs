@@ -1,12 +1,12 @@
-//! `human-in-loop channel` configuration for the two maintained remote delivery channels.
+//! `human-in-loop channel` configuration for the maintained iMessage delivery channel.
 
-use super::cfgio::{self, SecretSource};
+use super::cfgio;
 use crate::config::{AppConfig, IMessageIdentityMode};
 use crate::i18n::{err_prefix, Lang};
 use std::collections::HashMap;
 use std::process::exit;
 
-pub(crate) const CHANNELS: [&str; 2] = ["feishu", "imessage"];
+pub(crate) const CHANNELS: [&str; 1] = ["imessage"];
 
 pub fn dispatch(args: &[String], lang: Lang) {
     let sub = args.first().map(String::as_str).unwrap_or("help");
@@ -17,7 +17,6 @@ pub fn dispatch(args: &[String], lang: Lang) {
         "enable" => toggle(rest, true, lang),
         "disable" => toggle(rest, false, lang),
         "test" => test(rest, lang),
-        "detect" => detect(rest, lang),
         "help" | "-h" | "--help" => {
             print_line(&help(lang));
             Ok(())
@@ -69,7 +68,6 @@ fn list(args: &[String], lang: Lang) -> Result<(), String> {
 struct ParsedFlags {
     enabled: Option<bool>,
     values: HashMap<String, String>,
-    secrets: HashMap<String, SecretSource>,
 }
 
 fn parse_flags(args: &[String], lang: Lang) -> Result<ParsedFlags, String> {
@@ -89,11 +87,6 @@ fn parse_flags(args: &[String], lang: Lang) -> Result<ParsedFlags, String> {
                 &format!("非预期参数: {flag}"),
             )
         })?;
-        if let Some(field) = name.strip_suffix("-stdin") {
-            parsed.secrets.insert(field.into(), SecretSource::Stdin);
-            index += 1;
-            continue;
-        }
         let value = args.get(index + 1).ok_or_else(|| {
             cfgio::t(
                 lang,
@@ -101,17 +94,7 @@ fn parse_flags(args: &[String], lang: Lang) -> Result<ParsedFlags, String> {
                 &format!("{flag} 需要参数值"),
             )
         })?;
-        if let Some(field) = name.strip_suffix("-env") {
-            parsed
-                .secrets
-                .insert(field.into(), SecretSource::Env(value.clone()));
-        } else if let Some(field) = name.strip_suffix("-file") {
-            parsed
-                .secrets
-                .insert(field.into(), SecretSource::File(value.clone()));
-        } else {
-            parsed.values.insert(name.into(), value.clone());
-        }
+        parsed.values.insert(name.into(), value.clone());
         index += 2;
     }
     Ok(parsed)
@@ -124,29 +107,11 @@ fn set(args: &[String], lang: Lang) -> Result<(), String> {
         lang,
     )?;
     let mut parsed = parse_flags(&args[1..], lang)?;
-    if parsed.enabled.is_none() && parsed.values.is_empty() && parsed.secrets.is_empty() {
+    if parsed.enabled.is_none() && parsed.values.is_empty() {
         return Err(cfgio::t(lang, "no settings supplied", "未提供设置项"));
     }
     let mut config = AppConfig::load_without_secrets();
     match name {
-        "feishu" => {
-            let channel = &mut config.channels.feishu;
-            if let Some(enabled) = parsed.enabled {
-                channel.enabled = enabled;
-            }
-            if let Some(value) = parsed.values.remove("app-id") {
-                channel.app_id = value;
-            }
-            if let Some(value) = parsed.values.remove("open-id") {
-                channel.open_id = value;
-            }
-            if let Some(value) = parsed.values.remove("base-url") {
-                channel.base_url = value;
-            }
-            if let Some(source) = parsed.secrets.remove("app-secret") {
-                channel.app_secret = cfgio::read_secret(&source, lang)?;
-            }
-        }
         "imessage" => {
             let channel = &mut config.channels.imessage;
             if let Some(enabled) = parsed.enabled {
@@ -173,11 +138,7 @@ fn set(args: &[String], lang: Lang) -> Result<(), String> {
         }
         _ => unreachable!(),
     }
-    let mut leftovers: Vec<_> = parsed
-        .values
-        .into_keys()
-        .chain(parsed.secrets.into_keys())
-        .collect();
+    let mut leftovers: Vec<_> = parsed.values.into_keys().collect();
     leftovers.sort();
     if !leftovers.is_empty() {
         return Err(format!(
@@ -202,25 +163,10 @@ fn toggle(args: &[String], enabled: bool, lang: Lang) -> Result<(), String> {
     )?;
     let mut config = AppConfig::load_without_secrets();
     match name {
-        "feishu" => config.channels.feishu.enabled = enabled,
         "imessage" => config.channels.imessage.enabled = enabled,
         _ => unreachable!(),
     }
     config.save().map_err(|error| error.to_string())
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TestConfigLoader {
-    WithSecrets,
-    WithoutSecrets,
-}
-
-fn test_config_loader(name: &str) -> TestConfigLoader {
-    if name == "feishu" {
-        TestConfigLoader::WithSecrets
-    } else {
-        TestConfigLoader::WithoutSecrets
-    }
 }
 
 fn test(args: &[String], lang: Lang) -> Result<(), String> {
@@ -229,20 +175,8 @@ fn test(args: &[String], lang: Lang) -> Result<(), String> {
             .ok_or_else(|| "usage: channel test <name>".to_string())?,
         lang,
     )?;
-    let config = match test_config_loader(name) {
-        TestConfigLoader::WithSecrets => AppConfig::load(),
-        TestConfigLoader::WithoutSecrets => AppConfig::load_without_secrets(),
-    };
+    let config = AppConfig::load_without_secrets();
     match name {
-        "feishu" => cfgio::block_on(crate::commands::feishu_test(
-            crate::commands::FeishuTestArgs {
-                app_id: config.channels.feishu.app_id,
-                app_secret: String::new(),
-                open_id: config.channels.feishu.open_id,
-                base_url: config.channels.feishu.base_url,
-            },
-        ))
-        .map(|message| print_line(&message)),
         "imessage" => {
             let health =
                 cfgio::block_on(crate::channels::imessage::health(&config.channels.imessage));
@@ -261,67 +195,19 @@ fn test(args: &[String], lang: Lang) -> Result<(), String> {
     }
 }
 
-fn detect(args: &[String], lang: Lang) -> Result<(), String> {
-    let name = canon(
-        args.first()
-            .ok_or_else(|| "usage: channel detect feishu [--save]".to_string())?,
-        lang,
-    )?;
-    if name == "imessage" {
-        return Err(cfgio::t(
-            lang,
-            "Configure the approved recipient and identity mode; the first structured confirmation can bootstrap the direct iMessage chat.",
-            "请配置获批收件人与身份模式；第一条结构化确认可自动建立 iMessage 单聊。",
-        ));
-    }
-    let config = AppConfig::load();
-    let code = cfgio::block_on(crate::commands::feishu_detect_prepare(
-        crate::commands::FeishuDetectArgs {
-            app_id: config.channels.feishu.app_id.clone(),
-            app_secret: String::new(),
-            base_url: config.channels.feishu.base_url.clone(),
-        },
-    ))?;
-    eprintln!(
-        "{}",
-        cfgio::t(
-            lang,
-            &format!("Send this code to your bot within 120s: {code}"),
-            &format!("请在 120 秒内把识别码发给机器人: {code}")
-        )
-    );
-    let open_id = cfgio::block_on(crate::commands::feishu_detect_wait(
-        crate::commands::FeishuWaitArgs {
-            app_id: config.channels.feishu.app_id,
-            app_secret: String::new(),
-            base_url: config.channels.feishu.base_url,
-            code,
-        },
-    ))?;
-    print_line(&open_id);
-    if args.iter().any(|arg| arg == "--save") {
-        let mut saved = AppConfig::load_without_secrets();
-        saved.channels.feishu.open_id = open_id;
-        saved.save().map_err(|error| error.to_string())?;
-    }
-    Ok(())
-}
-
 fn canon(name: &str, lang: Lang) -> Result<&'static str, String> {
     match name.trim().to_ascii_lowercase().as_str() {
-        "feishu" | "lark" => Ok("feishu"),
         "imessage" | "messages" => Ok("imessage"),
         other => Err(cfgio::t(
             lang,
-            &format!("unknown channel: {other} (expected feishu|imessage)"),
-            &format!("未知渠道: {other}（应为 feishu|imessage）"),
+            &format!("unknown channel: {other} (expected imessage)"),
+            &format!("未知渠道: {other}（应为 imessage）"),
         )),
     }
 }
 
 pub(crate) fn conn_name(name: &str) -> &'static str {
     match name {
-        "feishu" => "feishu",
         "imessage" => "imessage",
         _ => "",
     }
@@ -329,7 +215,6 @@ pub(crate) fn conn_name(name: &str) -> &'static str {
 
 pub(crate) fn is_enabled(config: &AppConfig, name: &str) -> bool {
     match name {
-        "feishu" => config.channels.feishu.enabled,
         "imessage" => config.channels.imessage.enabled,
         _ => false,
     }
@@ -337,11 +222,6 @@ pub(crate) fn is_enabled(config: &AppConfig, name: &str) -> bool {
 
 pub(crate) fn is_configured(config: &AppConfig, name: &str) -> bool {
     match name {
-        "feishu" => {
-            !config.channels.feishu.app_id.trim().is_empty()
-                && !config.channels.feishu.open_id.trim().is_empty()
-                && cfgio::secret_is_set(crate::secrets::ACCOUNT_FEISHU_SECRET)
-        }
         "imessage" => !config.channels.imessage.recipient.trim().is_empty(),
         _ => false,
     }
@@ -358,8 +238,8 @@ fn yes_no_word(value: bool, lang: Lang) -> String {
 fn help(lang: Lang) -> String {
     cfgio::t(
         lang,
-        "human-in-loop channel — maintained channels: feishu | imessage\n\n  channel list [--json]\n  channel set feishu [--enable|--disable] --app-id <id> --open-id <id> --base-url <url> --app-secret-{env|file|stdin}\n  channel set imessage [--enable|--disable] --recipient <handle> --identity-mode <distinct_peer|same_account> [--chat-id <id> --chat-guid <guid>]\n  channel enable|disable <name>\n  channel test <name>\n  channel detect feishu [--save]\n\nApple Messages always uses explicit iMessage service with SMS fallback disabled.",
-        "human-in-loop channel —— 受维护渠道：feishu | imessage\n\n  channel list [--json]\n  channel set feishu [--enable|--disable] --app-id <id> --open-id <id> --base-url <url> --app-secret-{env|file|stdin}\n  channel set imessage [--enable|--disable] --recipient <handle> --identity-mode <distinct_peer|same_account> [--chat-id <id> --chat-guid <guid>]\n  channel enable|disable <渠道>\n  channel test <渠道>\n  channel detect feishu [--save]\n\nApple 信息始终显式使用 iMessage 服务并关闭 SMS 回退。",
+        "human-in-loop channel — maintained channel: imessage\n\n  channel list [--json]\n  channel set imessage [--enable|--disable] --recipient <handle> --identity-mode <distinct_peer|same_account> [--chat-id <id> --chat-guid <guid>]\n  channel enable|disable imessage\n  channel test imessage\n\nApple Messages always uses explicit iMessage service with SMS fallback disabled.",
+        "human-in-loop channel —— 受维护渠道：imessage\n\n  channel list [--json]\n  channel set imessage [--enable|--disable] --recipient <handle> --identity-mode <distinct_peer|same_account> [--chat-id <id> --chat-guid <guid>]\n  channel enable|disable imessage\n  channel test imessage\n\nApple 信息始终显式使用 iMessage 服务并关闭 SMS 回退。",
     )
 }
 
@@ -380,12 +260,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn channel_health_loads_secrets_only_for_feishu() {
-        assert_eq!(
-            test_config_loader("imessage"),
-            TestConfigLoader::WithoutSecrets
-        );
-        assert_eq!(test_config_loader("feishu"), TestConfigLoader::WithSecrets);
+    fn maintained_channel_registry_is_imessage_only() {
+        assert_eq!(CHANNELS, ["imessage"]);
     }
 
     #[test]

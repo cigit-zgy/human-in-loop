@@ -1,7 +1,7 @@
 //! Slack Socket Mode Router：进程内独占一条 `SlackWs`，把事件按
 //! `message_ts`（交互回调）/ `user_id`（聊天消息）分发到对应会话。
 //!
-//! 设计与飞书 `feishu::router` 同构，但更简单：Slack 的 ack（回 `envelope_id`）在 `ws` 层收帧即完成
+//! Slack ack（回 `envelope_id`）在 `ws` 层收帧即完成
 //! （与卡片更新解耦），故这里**无需** oneshot 延迟回包；Router 只做纯分发。
 //!
 //! 单进程与 Daemon 复用：Daemon 持共享且常热的 Router；单进程每进程起一个仅挂 1 个会话的同款 Router。

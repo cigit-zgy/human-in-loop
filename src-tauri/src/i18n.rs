@@ -257,7 +257,6 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         "app.runtimeCreateFailed" => pick(lang, "failed to create runtime: {e}", "无法创建运行时: {e}"),
         "app.telegramInvalid" => pick(lang, "invalid Telegram config: {e}", "Telegram 配置无效: {e}"),
         "app.dingtalkInvalid" => pick(lang, "invalid DingTalk config: {e}", "钉钉配置无效: {e}"),
-        "app.feishuInvalid" => pick(lang, "invalid Feishu config: {e}", "飞书配置无效: {e}"),
         "app.slackInvalid" => pick(lang, "invalid Slack config: {e}", "Slack 配置无效: {e}"),
         "app.sessionEndedNoResult" => pick(
             lang,
@@ -291,18 +290,6 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         "channel.recommendedPrefix" => pick(lang, "[👍Recommended] ", "【👍推荐】 "),
         // Slack 原生选项 description 推荐文案（控件内展示，无括号）。
         "channel.slackRecommended" => pick(lang, "👍 Recommended", "👍 推荐"),
-        // 飞书选项 checker 的推荐前缀：lark_md 绿色含括号（checker text 用 lark_md）。
-        "channel.feishuRecommendedPrefix" => pick(
-            lang,
-            "<font color='green'>[👍Recommended]</font> ",
-            "<font color='green'>【👍推荐】</font> ",
-        ),
-        // Todo markers replace the legacy text prefix only in rich-text-capable channels.
-        "channel.feishuTodoPrefix" => pick(
-            lang,
-            "<font color='orange'>【TODO】</font> ",
-            "<font color='orange'>【TODO】</font> ",
-        ),
         // 钉钉选项 md 的推荐徽标文案（card.rs 用 h5 字号 + 绿色 font 包裹，含括号）。
         "channel.dingtalkRecommended" => pick(lang, "[👍Recommended]", "【👍推荐】"),
         "channel.dingtalkTodo" => pick(lang, "【TODO】", "【TODO】"),
@@ -311,7 +298,6 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         "channel.sourcePopup" => pick(lang, "Popup", "弹窗"),
         "channel.sourceTelegram" => pick(lang, "Telegram", "Telegram"),
         "channel.sourceDingTalk" => pick(lang, "DingTalk", "钉钉"),
-        "channel.sourceFeishu" => pick(lang, "Feishu", "飞书"),
         "channel.sourceSlack" => pick(lang, "Slack", "Slack"),
         // Cancel source: the caller (CLI/terminal cancelled the request).
         "channel.sourceCaller" => pick(lang, "Caller", "调用方"),
@@ -348,7 +334,7 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
             "请先选择一个选项。",
         ),
         "channel.fileSendFailed" => pick(lang, "⚠️ Failed to send file: {name}", "⚠️ 文件发送失败：{name}"),
-        // Telegram question title (fallback when there's no source header), consistent with DingTalk/Feishu.
+        // Telegram question title (fallback when there's no source header), consistent with card transports.
         "channel.tgTitleFallback" => pick(lang, "Question", "提问"),
         "channel.ddTitleFallback" => pick(lang, "Question", "提问"),
         "channel.ddHintFree" => pick(
@@ -381,31 +367,6 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         "channel.ddCardDeliverFailed" => pick(lang, "failed to deliver DingTalk card, falling back to text: {e}", "钉钉互动卡片投放失败，回退纯文本: {e}"),
         "channel.ddImageDownloadFailed" => pick(lang, "failed to download DingTalk image: {e}", "钉钉图片下载失败: {e}"),
         "channel.ddFileDownloadFailed" => pick(lang, "failed to download DingTalk file: {e}", "钉钉文件下载失败: {e}"),
-
-        // —— 飞书渠道：发给用户的文案 + 本地诊断 ——
-        // 卡片终态文案（PATCH 卡片 / toast）。卡片自带样式，文案不加 emoji 前缀。
-        "channel.fsSubmitted" => pick(lang, "Submitted", "已提交"),
-        "channel.fsAnsweredVia" => pick(lang, "Answered via {source}", "已在{source}回答"),
-        // Cancelled terminal state (card carries its own style, no emoji prefix).
-        "channel.fsCancelled" => pick(lang, "Cancelled", "已取消"),
-        "channel.fsCancelledBy" => pick(lang, "Cancelled by {source}", "已被{source}取消"),
-        "channel.fsTitleFallback" => pick(lang, "Question", "提问"),
-        // 卡片表单：输入框占位 + 提交按钮文案。
-        "channel.fsInputPlaceholder" => pick(lang, "Add a note (optional)", "补充说明（可选）"),
-        // 终态卡上补充文字的小标题（引用块之上）。
-        "channel.fsNoteLabel" => pick(lang, "My note:", "我的补充："),
-        "channel.fsSubmitButton" => pick(lang, "Submit", "提交"),
-        "channel.fsConfigInvalidSkip" => pick(
-            lang,
-            "invalid Feishu config, skipping this channel: {e}",
-            "飞书配置无效，已跳过该 Channel: {e}",
-        ),
-        "channel.fsMessageSendFailed" => pick(lang, "failed to send Feishu Message: {e}", "飞书 Message 发送失败: {e}"),
-        "channel.fsFileSendFailedLog" => pick(lang, "failed to send Feishu file: {path}: {e}", "飞书文件发送失败: {path}: {e}"),
-        "channel.fsQuestionSendFailed" => pick(lang, "failed to send Feishu question: {e}", "飞书提问发送失败: {e}"),
-        "channel.fsCardDeliverFailed" => pick(lang, "failed to deliver Feishu card, falling back to text: {e}", "飞书互动卡片投放失败，回退纯文本: {e}"),
-        "channel.fsImageDownloadFailed" => pick(lang, "failed to download Feishu image: {e}", "飞书图片下载失败: {e}"),
-        "channel.fsFileDownloadFailed" => pick(lang, "failed to download Feishu file: {e}", "飞书文件下载失败: {e}"),
 
         // —— IM 会话期自动激活：入站回执 / 命令 / 状态文本 ——
         // 激活确认（发 here、或普通消息触发切换时回执；用语中性，无论是否真的切换都贴切）。
@@ -717,14 +678,13 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
             "✅ 识别成功，已自动填入{field}。",
         ),
         "autoChannel.detectFieldUserId" => pick(lang, "User ID", "用户 ID"),
-        "autoChannel.detectFieldOpenId" => pick(lang, "OpenID", "用户 OpenID"),
 
         // —— /watch 实时关注（spec docs/specs/im-watch.md；四渠道全支持）——
         // 渠道门控：理论上已无渠道触发（四渠道全支持），保留兜底未来新渠道。
         "watch.unsupported" => pick(
             lang,
-            "Live watch is available on Feishu, Telegram, Slack and DingTalk.",
-            "「实时关注」支持飞书、Telegram、Slack、钉钉渠道。",
+            "Live watch is available on Telegram, Slack and DingTalk.",
+            "「实时关注」支持 Telegram、Slack、钉钉渠道。",
         ),
         // 关注上限。`{p}` 为渠道命令前缀（Slack 用 `!`，其余 `/`）。
         "watch.limit" => pick(
@@ -758,7 +718,7 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
             "Not watching agent [{id}]. Send {p}watch to list current watches.",
             "没有关注编号为 {id} 的 agent。发送 {p}watch 查看当前关注。",
         ),
-        // 发卡失败（飞书配置/网络问题）。
+        // 发卡失败（配置/网络问题）。
         "watch.sendFailed" => pick(lang, "Failed to send the watch card: {e}", "发送关注卡片失败：{e}"),
         // 卡片：样式化头部（{id} 编号、{agent} 家族名、{project} 项目名）。
         "watch.cardHeader" => pick(lang, "Watching [{id}] {agent} — {project}", "实时关注 [{id}] {agent} — {project}"),
@@ -926,7 +886,7 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
             "Add: send {p}todo <text> and choose this project; delete: {p}todo-rm.",
             "新增：发送 {p}todo <内容> 后选择本项目；删除：发送 {p}todo-rm。",
         ),
-        // 卡片自带输入框（飞书/钉钉）时正文只提示删除入口。
+        // 卡片自带输入框时正文只提示删除入口。
         "todoIm.rmHint" => pick(
             lang,
             "Delete: send {p}todo-rm and choose this project.",
@@ -1111,7 +1071,7 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         ),
 
         // —— Slack 渠道：发给用户的文案 + 本地诊断 ——
-        // 静态终态卡片状态行（无 emoji 前缀，与飞书/钉钉一致）。
+        // 静态终态卡片状态行（无 emoji 前缀）。
         "channel.slSubmitted" => pick(lang, "Submitted", "已提交"),
         "channel.slAnsweredVia" => pick(lang, "Answered via {source}", "已在{source}回答"),
         "channel.slCancelled" => pick(lang, "Cancelled", "已取消"),
@@ -1217,28 +1177,6 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         ),
         "cmd.streamDisconnected" => pick(lang, "Stream disconnected, please retry", "Stream 连接断开，请重试"),
         "cmd.detectCancelled" => pick(lang, "Auto-detect cancelled", "已取消自动识别"),
-
-        // —— 飞书测试连接 / open_id 自动识别（commands.feishu_test / feishu_detect_*）——
-        "cmd.fillOpenId" => pick(
-            lang,
-            "Please fill in Open ID first (use “Auto-detect” to get it)",
-            "请先填写 Open ID（可点击「自动识别」获取）",
-        ),
-        "cmd.fsTestRemote" => pick(
-            lang,
-            "✅ AskHuman Feishu connection test succeeded",
-            "✅ AskHuman 飞书连接测试成功",
-        ),
-        "cmd.fsTestSent" => pick(
-            lang,
-            "A test message was sent to your direct chat — please check Feishu",
-            "已向你的单聊发送一条测试消息，请在飞书查收",
-        ),
-        "cmd.fillAppIdSecret" => pick(
-            lang,
-            "Please fill in AppId and AppSecret first",
-            "请先填写 AppId 和 AppSecret",
-        ),
 
         // —— Slack 测试连接 / userId 自动识别（commands.slack_test / slack_detect_*）——
         "cmd.slTestRemote" => pick(
@@ -1383,7 +1321,7 @@ pub fn tr(lang: Lang, key: &'static str) -> &'static str {
         "tray.tooltipRunning" => pick(lang, "AskHuman — running", "AskHuman — 运行中"),
         "tray.tooltipStopped" => pick(lang, "AskHuman — not running", "AskHuman — 未运行"),
 
-        // —— 错误类型校验文案（Telegram/钉钉/飞书 Error::localized）——
+        // —— 错误类型校验文案 ——
         "err.tgEmptyToken" => pick(lang, "Bot Token must not be empty", "Bot Token 不能为空"),
         "err.tgEmptyChatId" => pick(lang, "Chat ID must not be empty", "Chat ID 不能为空"),
         "err.tgInvalidChatId" => pick(

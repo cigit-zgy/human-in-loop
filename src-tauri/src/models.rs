@@ -55,7 +55,6 @@ pub enum NotificationDeliveryStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum NotificationChannel {
-    Feishu,
     Imessage,
 }
 
@@ -1084,7 +1083,7 @@ mod tests {
         assert_eq!(approve.comment, None);
 
         let deny = request
-            .resolve_submission(1, Some("  unsafe  ".into()), "feishu")
+            .resolve_submission(1, Some("  unsafe  ".into()), "imessage")
             .unwrap();
         assert_eq!(deny.action_id, "deny");
         assert_eq!(deny.comment.as_deref(), Some("unsafe"));

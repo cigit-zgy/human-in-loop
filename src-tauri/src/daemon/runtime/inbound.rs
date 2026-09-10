@@ -19,22 +19,6 @@ pub(super) async fn ensure_inbound_listeners(state: &Arc<ServerState>) {
         return;
     }
 
-    if crate::app::is_feishu_active(&config) {
-        if let Some(stop) = state.inbound_listeners.claim("feishu") {
-            match ensure_fs_router(state, &config.channels.feishu).await {
-                Some(r) => spawn_listener(
-                    state,
-                    "feishu",
-                    r.observe_message(),
-                    extract_feishu,
-                    config.channels.feishu.open_id.trim().to_string(),
-                    stop,
-                ),
-                None => state.inbound_listeners.release("feishu", &stop),
-            }
-        }
-    }
-
     // 兜底：随 Router 重建恢复活动单选卡的按钮回调路由（无 picker 时为 no-op）。
     ensure_select_routes(state).await;
 }
@@ -96,22 +80,6 @@ fn is_telegram_msg_compose_reply(state: &Arc<ServerState>, ev: &serde_json::Valu
     let mut tombstones = state.select.msg_compose_tombstones.lock().unwrap();
     tombstones.retain(|_, expires_at| *expires_at > now);
     tombstones.contains_key(&format!("telegram\n{}", reply_mid))
-}
-
-/// 飞书原始消息 → `Inbound`（发送者 open_id + 文本？）；非文本时 `text=None`、非消息事件返回 None。
-pub(super) fn extract_feishu(ev: &serde_json::Value) -> Option<Inbound> {
-    let open_id = ev
-        .get("sender")
-        .and_then(|s| s.get("sender_id"))
-        .and_then(|i| i.get("open_id"))
-        .and_then(|v| v.as_str())?
-        .to_string();
-    ev.get("message")?; // 确保是一条消息事件
-    let text = fs_text_and_sender(ev).map(|(_, t)| t);
-    Some(Inbound {
-        sender: open_id,
-        text,
-    })
 }
 
 /// 钉钉原始 bot 消息 → `Inbound`（senderStaffId + 文本？）；非文本时 `text=None`。
@@ -206,7 +174,7 @@ pub(super) fn select_is_last_on(state: &Arc<ServerState>, channel_id: &str) -> b
         .any(|p| p.channel == channel_id && p.posted_ms >= disturb)
 }
 
-// ===== /watch 实时关注引擎（spec docs/specs/im-watch.md，P1 仅飞书）=====
+// ===== /watch 实时关注引擎（spec docs/specs/im-watch.md）=====
 
 /// 从注册表快照数组中按 session_id 找记录。
 pub(super) fn find_agent_by_session<'a>(
@@ -1264,15 +1232,6 @@ async fn start_task_input_form(
         return;
     };
     let started = match channel_id {
-        "feishu" => ensure_fs_router(state, &config.channels.feishu)
-            .await
-            .map(|router| {
-                crate::channels::confirm::start_feishu(
-                    entry.clone(),
-                    config.channels.feishu.clone(),
-                    router,
-                );
-            }),
         "dingding" => ensure_dd_router(
             state,
             config.channels.dingding.client_id.trim(),
@@ -1423,7 +1382,6 @@ fn resolve_task_input(
 
 pub(super) fn task_source_target(config: &AppConfig, channel_id: &str) -> String {
     match channel_id {
-        "feishu" => config.channels.feishu.open_id.clone(),
         "dingding" => config.channels.dingding.user_id.clone(),
         "telegram" => config.channels.telegram.chat_id.clone(),
         "slack" => config.channels.slack.user_id.clone(),
@@ -1518,7 +1476,7 @@ pub(super) async fn handle_inbound(state: &Arc<ServerState>, channel_id: &str, t
                     let _ = reply_channel_text(channel_id, &config, &body).await;
                 }
                 // /status（无参）：切槽回执（若有）作独立文本，随后推「选择要查看的 Agent」单选卡；
-                // 无 agent / 非飞书 → 回既有工作中/空闲文本列表兜底。
+                // 无 agent → 回既有工作中/空闲文本列表兜底。
                 None => {
                     if switched {
                         let _ = reply_channel_text(
@@ -1578,7 +1536,7 @@ pub(super) async fn handle_inbound(state: &Arc<ServerState>, channel_id: &str, t
             )
             .await;
         }
-        // /watch、/unwatch：实时关注（P1 仅飞书；其余渠道回「暂仅支持飞书」提示）。
+        // /watch、/unwatch：legacy interactive 实时关注。
         Parsed::Command(Command::Watch(sel)) => {
             // `/watch` 属「在该渠道操作」→ 设为活跃槽（用户决策；配合 D2 让离开时自动结束 watch）。
             activate_channel_on_action(state, channel_id, &config, lang).await;
@@ -1845,13 +1803,6 @@ pub(super) async fn build_im_channel(
     state: &Arc<ServerState>,
 ) -> Option<Arc<dyn Channel>> {
     let ch: Arc<dyn Channel> = match channel_id {
-        "feishu" => {
-            let router = ensure_fs_router(state, &config.channels.feishu).await?;
-            Arc::new(FeishuChannel::shared(
-                config.channels.feishu.clone(),
-                router,
-            ))
-        }
         "dingding" => {
             let dd = &config.channels.dingding;
             let router =
@@ -1881,15 +1832,6 @@ pub(super) async fn reply_channel_text(
     text: &str,
 ) -> Result<(), String> {
     match channel_id {
-        "feishu" => {
-            let client = crate::feishu::client::FeishuClient::new(&config.channels.feishu)
-                .map_err(|e| e.to_string())?;
-            client
-                .send_text(text)
-                .await
-                .map(|_| ())
-                .map_err(|e| e.to_string())
-        }
         "dingding" => {
             let client = crate::dingtalk::client::DingTalkClient::new(&config.channels.dingding)
                 .map_err(|e| e.to_string())?;
@@ -1933,19 +1875,6 @@ pub(super) async fn reply_channel_help(
 ) -> Result<(), String> {
     let plain = crate::autochannel::render_help_plain(view, lang);
     match channel_id {
-        "feishu" => {
-            let client = crate::feishu::client::FeishuClient::new(&config.channels.feishu)
-                .map_err(|e| e.to_string())?;
-            let card = crate::feishu::card::build_help_card(view, lang);
-            match client.send_card(&card).await {
-                Ok(_) => Ok(()),
-                Err(_) => client
-                    .send_text(&plain)
-                    .await
-                    .map(|_| ())
-                    .map_err(|e| e.to_string()),
-            }
-        }
         "dingding" => {
             let client = crate::dingtalk::client::DingTalkClient::new(&config.channels.dingding)
                 .map_err(|e| e.to_string())?;
@@ -2210,13 +2139,6 @@ pub(super) async fn run_diff(
     let meta = format!("Diff · [{seq}] {kind} · {project}");
     // 用户定案：直接发附件，不附摘要消息头。
     let (bytes, name) = match channel_id {
-        "feishu" => {
-            let diff = crate::export::render_diff_file(&model);
-            (
-                diff.into_bytes(),
-                crate::export::diff_filename(seq, &project, "diff"),
-            )
-        }
         "dingding" | "slack" => match crate::export::render_diff_docx(&model, &meta) {
             Ok(b) => (b, crate::export::diff_filename(seq, &project, "docx")),
             Err(e) => {
@@ -2280,13 +2202,6 @@ pub(super) async fn run_transcript(
     // 用户定案：直接发附件，不附摘要消息头。
     let slug_src = if title.is_empty() { &project } else { &title };
     let (bytes, name) = match channel_id {
-        "feishu" => {
-            let md = crate::export::render_transcript_md(&doc, &meta);
-            (
-                md.into_bytes(),
-                crate::export::transcript_filename(seq, slug_src, "md"),
-            )
-        }
         "dingding" | "slack" => match crate::export::render_transcript_docx(&doc, &meta) {
             Ok(b) => (b, crate::export::transcript_filename(seq, slug_src, "docx")),
             Err(e) => {
@@ -2394,7 +2309,7 @@ pub(super) async fn handle_confirm_action(
     channel_id: &str,
     mid: &str,
     slot: crate::confirm::ConfirmSlot,
-    ack: Option<crate::confirm::transport::FsAck>,
+    ack: Option<crate::confirm::transport::CardAck>,
 ) {
     let lang = Lang::current();
     let config = state.config_snapshot();
@@ -2509,19 +2424,6 @@ pub(super) async fn reply_channel_file(
     std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
     let path_str = path.to_string_lossy().to_string();
     let result = match channel_id {
-        "feishu" => {
-            let client = crate::feishu::client::FeishuClient::new(&config.channels.feishu)
-                .map_err(|e| e.to_string())?;
-            let key = client
-                .upload_file(&path_str, file_name)
-                .await
-                .map_err(|e| e.to_string())?;
-            client
-                .send_file(&key)
-                .await
-                .map(|_| ())
-                .map_err(|e| e.to_string())
-        }
         "telegram" => {
             let tg = &config.channels.telegram;
             let client = crate::telegram::TelegramClient::new(
@@ -2568,7 +2470,6 @@ pub(super) async fn reply_channel_file(
     result
 }
 
-/// 从飞书 im.message.receive_v1 的 event 取 (发送者 open_id, 文本)。非文本消息返回 None。
 pub(super) fn fs_text_and_sender(event: &serde_json::Value) -> Option<(String, String)> {
     let open_id = event
         .get("sender")

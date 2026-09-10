@@ -5,7 +5,6 @@ use crate::config::AppConfig;
 use crate::models::{
     HumanNotification, NotificationChannel, NotificationDeliveryStatus, NotificationResult,
 };
-use futures_util::{stream::FuturesUnordered, StreamExt};
 use std::time::Duration;
 
 pub const DISPATCH_TIMEOUT: Duration = Duration::from_secs(180);
@@ -155,70 +154,35 @@ pub async fn dispatch(
     let Ok(text) = render(notification) else {
         return result(notification.notification_id.clone(), &[]);
     };
-    let mut deliveries = FuturesUnordered::new();
-    for channel in candidates {
-        let text = &text;
-        deliveries.push(async move {
-            let kind = match *channel {
-                "feishu" => NotificationChannel::Feishu,
-                "imessage" => NotificationChannel::Imessage,
-                _ => return None,
-            };
-            let sent = tokio::time::timeout(DISPATCH_TIMEOUT, async {
-                match kind {
-                    NotificationChannel::Feishu => {
-                        let Ok(client) =
-                            crate::feishu::client::FeishuClient::new(&config.channels.feishu)
-                        else {
-                            return false;
-                        };
-                        if client.open_id().is_empty() {
-                            return false;
-                        }
-                        client.send_text(text).await.is_ok_and(|id| !id.is_empty())
-                    }
-                    NotificationChannel::Imessage => {
-                        let channel = &config.channels.imessage;
-                        if crate::channels::imessage_worker::required_for(channel.identity_mode) {
-                            return crate::channels::imessage_worker::notify(channel, text)
-                                .await
-                                .is_ok();
-                        }
-                        let Ok(readiness) = imessage::prepare(channel).await else {
-                            return false;
-                        };
-                        let Ok(boundary) = imessage::pre_send_boundary(&readiness).await else {
-                            return false;
-                        };
-                        let Ok(receipt) = imessage::send(channel, text, None).await else {
-                            return false;
-                        };
-                        let Ok(resolved) = imessage::resolve_after_send(
-                            channel, &readiness, &boundary, &receipt, text,
-                        )
-                        .await
-                        else {
-                            return false;
-                        };
-                        imessage::persist_resolved_chat(channel, &resolved).is_ok()
-                    }
-                }
-            })
-            .await
-            .unwrap_or(false);
-            Some((kind, sent))
-        });
-    }
     let mut outcomes = Vec::new();
-    while let Some(outcome) = deliveries.next().await {
-        if let Some(outcome) = outcome {
-            outcomes.push(outcome);
-        }
+    if candidates.contains(&"imessage") {
+        let channel = &config.channels.imessage;
+        let sent = tokio::time::timeout(DISPATCH_TIMEOUT, async {
+            if crate::channels::imessage_worker::required_for(channel.identity_mode) {
+                return crate::channels::imessage_worker::notify(channel, &text)
+                    .await
+                    .is_ok();
+            }
+            let Ok(readiness) = imessage::prepare(channel).await else {
+                return false;
+            };
+            let Ok(boundary) = imessage::pre_send_boundary(&readiness).await else {
+                return false;
+            };
+            let Ok(receipt) = imessage::send(channel, &text, None).await else {
+                return false;
+            };
+            let Ok(resolved) =
+                imessage::resolve_after_send(channel, &readiness, &boundary, &receipt, &text).await
+            else {
+                return false;
+            };
+            imessage::persist_resolved_chat(channel, &resolved).is_ok()
+        })
+        .await
+        .unwrap_or(false);
+        outcomes.push((NotificationChannel::Imessage, sent));
     }
-    outcomes.sort_by_key(|(channel, _)| match channel {
-        NotificationChannel::Feishu => 0,
-        NotificationChannel::Imessage => 1,
-    });
     result(notification.notification_id.clone(), &outcomes)
 }
 
@@ -329,14 +293,10 @@ mod tests {
 
     #[test]
     fn dispatch_status_reports_mixed_failures_truthfully() {
-        use NotificationChannel::{Feishu, Imessage};
+        use NotificationChannel::Imessage;
         assert_eq!(
             result("n".into(), &[(Imessage, true)]).delivery_status,
             NotificationDeliveryStatus::Sent
-        );
-        assert_eq!(
-            result("n".into(), &[(Feishu, false), (Imessage, true)]).delivery_status,
-            NotificationDeliveryStatus::Partial
         );
         assert_eq!(
             result("n".into(), &[(Imessage, false)]).delivery_status,

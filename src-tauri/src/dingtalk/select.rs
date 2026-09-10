@@ -1,7 +1,7 @@
 //! 通用「单选卡」的钉钉渲染（互动卡片高级版模板变量）。
 //!
 //! 模板：用户在开发者后台由 `docs/assets/dingtalk-select-card-template.json` 导入并发布；内置默认 ID
-//! 见 `DEFAULT_SELECT_CARD_TEMPLATE_ID`。与飞书/TG/Slack 共享同一份 `SelectView`（传输无关）；差异仅
+//! 见 `DEFAULT_SELECT_CARD_TEMPLATE_ID`。与 TG/Slack 共享同一份 `SelectView`（传输无关）；差异仅
 //! 在载体：钉钉是「模板 + 变量」——
 //! - 全局：`title`(卡头标题) / `btn_text`(按钮文案) / `btn_color`(按钮色 blue|red) / `finalized`("true"|"false"
 //!   条件显隐循环 vs 定格标签) / `final_label`(定格文案)。
@@ -26,7 +26,7 @@ pub const ACTION_SELECT: &str = "select";
 
 /// 选项字号（footnote=12px）：主行与次行同用，最紧凑（用户定稿）。
 const SIZE_SMALL: &str = "common_footnote_text_style__font_size";
-/// 圆点颜色 token（与飞书 green/grey 圆点对应）。
+/// 圆点颜色 token。
 const COLOR_GREEN: &str = "common_green1_color";
 const COLOR_GREY: &str = "common_level3_base_color";
 

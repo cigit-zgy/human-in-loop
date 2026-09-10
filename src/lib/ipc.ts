@@ -6,9 +6,6 @@ import type {
   DingTalkDetectArgs,
   DingTalkTestArgs,
   DingTalkWaitArgs,
-  FeishuDetectArgs,
-  FeishuTestArgs,
-  FeishuWaitArgs,
   AgentId,
   AgentKind,
   AgentTaskReadiness,
@@ -37,7 +34,6 @@ import type {
   PermissionRulesResult,
   PopupSubmission,
   ProjectInfo,
-  SecretActions,
   SettingsPayload,
   SlackDetectArgs,
   SlackTestArgs,
@@ -112,8 +108,8 @@ export const getSettings = () => invoke<SettingsPayload>("get_settings");
 export const permissionRulesPanel = (op: PermissionRulesOp) =>
   invoke<PermissionRulesResult>("permission_rules_panel", { op });
 
-export const saveSettings = (config: AppConfig, secretActions: SecretActions) =>
-  invoke<void>("save_settings", { config, secretActions });
+export const saveSettings = (config: AppConfig) =>
+  invoke<void>("save_settings", { config });
 
 export const agentTaskWorkspaces = (refresh = false) =>
   invoke<AgentTaskWorkspace[]>("agent_task_workspaces", { refresh });
@@ -388,15 +384,6 @@ export const dingtalkDetectPrepare = (args: DingTalkDetectArgs) =>
 
 export const dingtalkDetectWait = (args: DingTalkWaitArgs) =>
   invoke<string>("dingtalk_detect_wait", { args });
-
-export const feishuTest = (args: FeishuTestArgs) =>
-  invoke<string>("feishu_test", { args });
-
-export const feishuDetectPrepare = (args: FeishuDetectArgs) =>
-  invoke<string>("feishu_detect_prepare", { args });
-
-export const feishuDetectWait = (args: FeishuWaitArgs) =>
-  invoke<string>("feishu_detect_wait", { args });
 
 export const slackTest = (args: SlackTestArgs) =>
   invoke<string>("slack_test", { args });

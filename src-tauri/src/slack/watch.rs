@@ -1,6 +1,6 @@
 //! `/watch` 实时状态卡的 Slack 渲染（Block Kit + mrkdwn）。
 //!
-//! 与飞书卡片同一份 `WatchFrame` / 共享文案构件（`watch::header_text` 等），差异仅在标记语言：
+//! 与其他 legacy card transport 共享 `WatchFrame` / 文案构件（`watch::header_text` 等）。
 //! - 状态圆点用 emoji 🟢/⚪/🔴（mrkdwn 无彩色字体）；类别词 `*粗体*`、参数 `_斜体_`。
 //! - TODO 只显示摘要行（用户定案：无折叠组件，不做展开）。
 //! - 终态：`chat.update` 置为无按钮 blocks + `context` 终态标签（Block Kit 无禁用按钮）。
@@ -30,7 +30,7 @@ pub fn build_watch_blocks(
     let state_line = watch::state_line_text(f, now, lang);
 
     let mut blocks: Vec<Value> = Vec::new();
-    // 头部（context 小字，对应飞书蓝色小字）。
+    // 头部 context 使用小字。
     blocks.push(json!({
         "type": "context",
         "elements": [{ "type": "mrkdwn", "text": format!("🤖 {}", esc(&header)) }]

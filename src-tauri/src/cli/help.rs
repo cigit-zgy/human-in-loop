@@ -361,10 +361,7 @@ pub fn scripting_help_text(lang: Lang) -> String {
                 "  action   \"answer\" when the user responded, \"cancel\" when they cancelled"
                     .to_string(),
             );
-            out.push(
-                "  channel  Which channel the response came from (popup/slack/feishu/...)"
-                    .to_string(),
-            );
+            out.push("  channel  Which channel the response came from".to_string());
             out.push(
                 "  answers  Present only for \"answer\"; one entry per ANSWERED question:"
                     .to_string(),
@@ -402,7 +399,7 @@ pub fn scripting_help_text(lang: Lang) -> String {
             out.push(String::new());
             out.push("JSON 输出（--output json）:".to_string());
             out.push("  action   用户作答为 \"answer\"，取消为 \"cancel\"".to_string());
-            out.push("  channel  回应来自哪个渠道（popup/slack/feishu/...）".to_string());
+            out.push("  channel  回应来自哪个渠道".to_string());
             out.push("  answers  仅 \"answer\" 时出现；每个「已作答」的问题一条:".to_string());
             out.push("    question_index    问题的 0 基下标".to_string());
             out.push("    selected_options  用户选择的选项原文（单选时恰好一个）".to_string());

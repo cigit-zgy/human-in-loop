@@ -54,7 +54,7 @@ pub struct HistoryEntry {
     /// fallback partition when no true Agent session id is available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp_instance_id: Option<String>,
-    /// Channel id that submitted / cancelled (popup / dingding / feishu / telegram).
+    /// Channel id that submitted or cancelled.
     #[serde(default)]
     pub channel: String,
     pub action: ChannelAction,

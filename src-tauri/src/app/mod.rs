@@ -10,7 +10,6 @@ pub mod tray_menu;
 
 use crate::cli::{image_writer, output};
 use crate::config::{AppConfig, ThemeMode, WindowEffect};
-use crate::feishu::client::FeishuClient;
 use crate::i18n::{self, Lang};
 use crate::models::{AskRequest, ChannelAction, ChannelResult, InteractionRequest, QuestionAnswer};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -414,12 +413,6 @@ pub(crate) fn is_telegram_active(_config: &AppConfig) -> bool {
 /// Returns whether the DingTalk channel has complete, valid connection settings.
 pub(crate) fn is_dingding_active(_config: &AppConfig) -> bool {
     false
-}
-
-/// Returns whether the Feishu channel has complete, valid connection settings.
-pub(crate) fn is_feishu_active(config: &AppConfig) -> bool {
-    let feishu = &config.channels.feishu;
-    feishu.enabled && !feishu.open_id.trim().is_empty() && FeishuClient::new(feishu).is_ok()
 }
 
 /// Returns whether the Slack channel has complete, valid connection settings.

@@ -1,7 +1,7 @@
 {
   "name": "humaninloop",
   "version": "0.1.2",
-  "description": "Human-in-the-loop interaction tool with Feishu and iMessage-only Apple Messages channels.",
+  "description": "Human-in-the-loop interaction tool with an iMessage-only Apple Messages channel.",
   "license": "MIT",
   "author": "cigit-zgy",
   "homepage": "https://github.com/cigit-zgy/human-in-loop",

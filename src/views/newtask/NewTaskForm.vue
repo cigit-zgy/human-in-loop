@@ -451,7 +451,7 @@ onBeforeUnmount(() => {
                 class="nt-choice-text"
                 :class="{ clamp: selectedTodo?.id !== e.id }"
               >
-                <!-- 待办前缀：与飞书/钉钉任务卡的琥珀色【TODO】标记同语义（IM D29）。 -->
+                <!-- 待办前缀：与任务卡的琥珀色【TODO】标记同语义（IM D29）。 -->
                 <span class="nt-todo-tag">{{ t("newTask.todoTag") }}</span
                 ><span v-if="e.auto" class="nt-auto">⚡</span>{{ e.text }}
                 <span v-if="e.attachments?.length" class="nt-file-count">
@@ -766,7 +766,7 @@ onBeforeUnmount(() => {
   color: #ff9f0a;
   margin-right: 3px;
 }
-/* Todo prefix tag: same semantics as the amber 【TODO】 marker on Feishu/DingTalk task cards (IM D29). */
+/* Todo prefix tag: same semantics as the amber 【TODO】 marker on task cards (IM D29). */
 .nt-todo-tag {
   color: #ff9f0a;
   font-weight: 600;

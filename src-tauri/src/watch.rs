@@ -1,9 +1,9 @@
 //! `/watch` 实时关注（spec `docs/specs/im-watch.md`）：与传输无关的纯逻辑。
 //!
-//! 一次关注 = 一张 IM「实时状态卡」，daemon 引擎按签名变化就地编辑（飞书 / Telegram / Slack；
+//! 一次关注 = 一张 IM「实时状态卡」，daemon 引擎按签名变化就地编辑（Telegram / Slack；
 //! 钉钉待 PoC）。本模块提供：订阅持久化（`~/.askhuman/state/watch.json`）、由注册表快照记录
 //! 构建**结构化**渲染「帧」（`WatchFrame`，不含任何渠道标记语言）、帧签名（变化才编辑，跨渠道
-//! 一致）、飞书卡片视图文案组装（`card_view`；Telegram/Slack 的渲染在各自渠道模块）、本地时区
+//! 一致）、渠道卡片视图文案组装、本地时区
 //! 绝对时刻格式化。
 
 use crate::autochannel;
@@ -22,14 +22,14 @@ pub const IDLE_GRACE_SECS: u64 = 5 * 60;
 /// 渠道是否支持 /watch（就地编辑 + 按钮回调都可用）。四渠道全支持（钉钉经 PoC 验证后
 /// M4 接入，`docs/plans/im-watch-channels.md` §4）。
 pub fn channel_supported(channel_id: &str) -> bool {
-    matches!(channel_id, "feishu" | "telegram" | "slack" | "dingding")
+    matches!(channel_id, "telegram" | "slack" | "dingding")
 }
 
 /// 持久化的一条关注（跨 daemon 重启恢复后继续编辑同一张卡）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PersistedWatch {
-    /// 渠道 id（feishu / telegram / slack / dingding）。
+    /// 渠道 id。
     pub channel: String,
     /// 被关注 agent 的 session_id（身份键，跨重启稳定；seq 编号不跨重启）。
     pub session_id: String,
@@ -112,7 +112,7 @@ pub enum CardMode {
 }
 
 /// 一帧渲染数据（由注册表快照记录 + 等待标志构建）。**结构化、无渠道标记语言**：
-/// 各渠道渲染器（飞书 `card_view` / Telegram / Slack）各自消费。签名不含渲染时刻，
+/// 各渠道渲染器各自消费。签名不含渲染时刻，
 /// 故内容不变不编辑。
 #[derive(Debug, Clone, PartialEq)]
 pub struct WatchFrame {
@@ -263,7 +263,7 @@ pub fn signature(f: &WatchFrame) -> String {
     s
 }
 
-// ── 渠道共享的本地化文案构件（飞书 `card_view` 与 Telegram/Slack 渲染器共用）──
+// ── 渠道共享的本地化文案构件 ──
 
 /// 头部行：`实时关注 [3] Cursor — HumanInLoop`。
 pub fn header_text(f: &WatchFrame, lang: Lang) -> String {
@@ -360,96 +360,6 @@ pub fn rewatch_label_text(kind: &FinalKind, lang: Lang) -> String {
         FinalKind::AutoStopped(to) => i18n::tr(lang, "watch.btnRewatch").replace("{to}", to),
         FinalKind::Cancelled => i18n::tr(lang, "watch.btnRewatchCancelled").to_string(),
         _ => final_label_text(kind, lang),
-    }
-}
-
-/// 组装飞书卡片视图（本地化文案在此完成）。`now` 为渲染时刻（Unix 秒，进「最后更新」行）。
-/// `session_id`：当 `mode` 为可重新关注终态时需传入以嵌入重新关注按钮的回调数据。
-pub fn card_view(
-    f: &WatchFrame,
-    mode: CardMode,
-    now: u64,
-    lang: Lang,
-    session_id: Option<&str>,
-) -> crate::feishu::card::WatchCardView {
-    use crate::feishu::card::{WatchButtons, WatchCardView};
-
-    let no_activity = if f.text.is_none() && f.steps.is_empty() {
-        Some(i18n::tr(lang, "autoChannel.statusNoActivity").to_string())
-    } else {
-        None
-    };
-
-    let buttons = match mode {
-        CardMode::Active => WatchButtons::Active {
-            unwatch: i18n::tr(lang, "watch.btnUnwatch").to_string(),
-            refresh: i18n::tr(lang, "watch.btnRefresh").to_string(),
-        },
-        CardMode::Final(ref kind) if kind.is_rewatchable() && session_id.is_some() => {
-            WatchButtons::Rewatch {
-                label: rewatch_label_text(kind, lang),
-                session_id: session_id.unwrap().to_string(),
-            }
-        }
-        CardMode::Final(kind) => WatchButtons::Final {
-            label: final_label_text(&kind, lang),
-        },
-    };
-
-    // 足迹时间线（飞书 markdown 渲染）；「… 已省略 N 步」标注（灰字）置于首行。
-    let mut step_lines: Vec<String> = f
-        .steps
-        .iter()
-        .map(|s| render_step_feishu(s, lang))
-        .collect();
-    if let Some(om) = omitted_line_text(f, lang) {
-        step_lines.insert(0, format!("<font color='grey'>{}</font>", om));
-    }
-
-    WatchCardView {
-        header: header_text(f, lang),
-        state_line: state_line_text(f, now, lang),
-        title_line: f.title.as_ref().map(|t| format!("「{}」", t)),
-        activity_heading: activity_heading_text(f, now, lang),
-        text: f.text.clone(),
-        step_lines,
-        todo_summary: autochannel::todo_summary(&f.todos, lang),
-        todo_lines: f.todos.iter().map(render_todo_feishu).collect(),
-        no_activity,
-        updated_line: updated_line_text(now, lang),
-        buttons,
-    }
-}
-
-/// 飞书卡片 markdown 的足迹步行：彩色圆点（进行中绿 / 已完成灰 / 失败红，`<font>` 标签）+
-/// **类别词加粗** + *对象斜体*（用户定案：去类别 emoji，靠粗/斜体区分名字与参数）。
-/// 颜色枚举为飞书卡片官方值（green/grey/red）。
-fn render_step_feishu(step: &crate::agents::activity::ToolStep, lang: Lang) -> String {
-    use crate::agents::activity::StepState;
-    let color = match step.state {
-        StepState::Running => "green",
-        StepState::Done => "grey",
-        StepState::Failed => "red",
-    };
-    let (label, object) = autochannel::step_label_object(step, lang);
-    match object {
-        Some(o) => format!("<font color='{}'>●</font> **{}**: *{}*", color, label, o),
-        None => format!("<font color='{}'>●</font> **{}**", color, label),
-    }
-}
-
-/// 飞书卡片 markdown 的 TODO 清单行（折叠面板内容）：进行中绿点加粗、已完成灰点删除线、
-/// 待办空心圈。cancelled 条目在解析层已剔除。
-fn render_todo_feishu(item: &crate::agents::activity::TodoItem) -> String {
-    use crate::agents::activity::TodoState;
-    match item.state {
-        TodoState::InProgress => {
-            format!("<font color='green'>●</font> **{}**", item.content)
-        }
-        TodoState::Completed => {
-            format!("<font color='grey'>●</font> ~~{}~~", item.content)
-        }
-        TodoState::Pending | TodoState::Cancelled => format!("○ {}", item.content),
     }
 }
 
@@ -585,44 +495,6 @@ mod tests {
     }
 
     #[test]
-    fn card_view_localizes_and_maps_buttons() {
-        let f = build_frame(3, Some(&rec("working")), false);
-        let now = 1_700_000_000;
-        let v = card_view(&f, CardMode::Active, now, Lang::Zh, None);
-        assert!(v.header.contains("[3]"));
-        assert!(v.header.contains("Cursor"));
-        assert!(v.header.contains("HumanInLoop"));
-        assert_eq!(v.state_line, "🟢 工作中");
-        assert_eq!(v.title_line.as_deref(), Some("「重构空闲退出」"));
-        // 该 session 无 transcript → 「暂无活动」占位。
-        assert!(v.no_activity.is_some());
-        match v.buttons {
-            crate::feishu::card::WatchButtons::Active {
-                ref unwatch,
-                ref refresh,
-            } => {
-                assert_eq!(unwatch, "取消关注");
-                assert_eq!(refresh, "立即刷新");
-            }
-            _ => panic!("expected active buttons"),
-        }
-        // 终态：单个禁用按钮 + 对应文案。
-        let fin = card_view(
-            &f,
-            CardMode::Final(FinalKind::Cancelled),
-            now,
-            Lang::Zh,
-            None,
-        );
-        match fin.buttons {
-            crate::feishu::card::WatchButtons::Final { ref label } => {
-                assert_eq!(label, "已取消关注")
-            }
-            _ => panic!("expected final button"),
-        }
-    }
-
-    #[test]
     fn auto_stopped_label_is_dynamic() {
         // 「自动结束 watch」终态：动态文案「已切换到 {to} · 自动结束关注」。
         let kind = FinalKind::AutoStopped("本地弹窗".to_string());
@@ -649,84 +521,9 @@ mod tests {
     }
 
     #[test]
-    fn stats_line_shows_cumulative_active_time_in_all_phases() {
-        let now = 1_700_000_000u64;
-        let mut r = rec("working");
-        r["activeElapsedSecs"] = json!(6 * 60);
-        let f = build_frame(3, Some(&r), false);
-        let v = card_view(&f, CardMode::Active, now, Lang::Zh, None);
-        assert_eq!(v.state_line, "🟢 工作中 · 累计工作 6 分钟");
-        // Cumulative time under one minute remains hidden on live Watch cards.
-        let mut r2 = rec("working");
-        r2["activeElapsedSecs"] = json!(30);
-        let f2 = build_frame(3, Some(&r2), false);
-        assert_eq!(
-            card_view(&f2, CardMode::Active, now, Lang::Zh, None).state_line,
-            "🟢 工作中"
-        );
-        // Idle and Ended cards retain the frozen cumulative total.
-        let mut r4 = rec("idle");
-        r4["activeElapsedSecs"] = json!(600);
-        let f4 = build_frame(3, Some(&r4), false);
-        assert_eq!(
-            card_view(&f4, CardMode::Active, now, Lang::Zh, None).state_line,
-            "⚪ 空闲 · 累计工作 10 分钟"
-        );
-        let mut r5 = rec("ended");
-        r5["activeElapsedSecs"] = json!(600);
-        let f5 = build_frame(3, Some(&r5), false);
-        assert_eq!(
-            card_view(&f5, CardMode::Active, now, Lang::Zh, None).state_line,
-            "⏹ 已结束 · 累计工作 10 分钟"
-        );
-        // The cumulative clock is excluded from the signature and cannot trigger edits alone.
-        assert_eq!(
-            signature(&f),
-            signature(&{
-                let mut r6 = rec("working");
-                r6["activeElapsedSecs"] = json!(7 * 60);
-                build_frame(3, Some(&r6), false)
-            })
-        );
-    }
-
-    #[test]
-    fn feishu_step_line_dot_bold_italic() {
-        use crate::agents::activity::{StepState, ToolDisplay, ToolLabel, ToolStep};
-        let step = |state: StepState| ToolStep {
-            tool: ToolDisplay {
-                label: ToolLabel::Run,
-                object: Some("cargo test".into()),
-            },
-            state,
-        };
-        assert_eq!(
-            render_step_feishu(&step(StepState::Running), Lang::Zh),
-            "<font color='green'>●</font> **运行命令**: *cargo test*"
-        );
-        assert_eq!(
-            render_step_feishu(&step(StepState::Done), Lang::Zh),
-            "<font color='grey'>●</font> **运行命令**: *cargo test*"
-        );
-        assert!(render_step_feishu(&step(StepState::Failed), Lang::Zh).contains("color='red'"));
-        // 无对象：只有加粗类别词。
-        let bare = ToolStep {
-            tool: ToolDisplay {
-                label: ToolLabel::Other("Grep".into()),
-                object: None,
-            },
-            state: StepState::Done,
-        };
-        assert_eq!(
-            render_step_feishu(&bare, Lang::Zh),
-            "<font color='grey'>●</font> **Grep**"
-        );
-    }
-
-    #[test]
     fn persisted_roundtrip() {
         let items = vec![PersistedWatch {
-            channel: "feishu".into(),
+            channel: "telegram".into(),
             session_id: "s1".into(),
             message_id: "om_1".into(),
             created_at: 42,

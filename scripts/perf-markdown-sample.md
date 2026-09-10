@@ -235,7 +235,7 @@ WebView native 初始化是**每进程一次性**的硬成本，单次调用内�
 canonical 场景每次：
 
 - **隔离 daemon + 零钥匙串副作用（关键）**：在**临时 `HOME`** 下跑**独立 daemon**——socket/lock/perf.log/agents/config 全在 `$HOME/.askhuman`，重定向 `HOME` 即整链隔离，**绝不触碰用户真实 daemon / 在途提问**。另设 `ASKHUMAN_NO_KEYCHAIN=1`（`secrets.rs` 据此走「钥匙串不可用→明文回退」路径），因 OS 钥匙串**不随 `HOME` 隔离**，否则 `AppConfig::load()` 会把 config 里的占位密钥写进/覆盖用户真实钥匙串。
-- **本地 mock IM 覆盖全部 4 渠道**：`perf-mock-im.mjs` 单进程同端口服务四家的 HTTP OpenAPI + WebSocket。canonical config 启用钉钉/飞书/Telegram/Slack 并指向 mock（Telegram/飞书用 config 的 base url；钉钉/Slack 硬编码端点用 `ASKHUMAN_{DINGTALK,SLACK}_API_BASE` env 覆盖，仅测试用、未设则不变）。mock 让各 `Router::connect()` 成功并保活、且接受发卡片（驱动渠道自身发送代码真跑），并对**建连与发送两处各注入 ~150ms 延迟**：建连延迟当下就落在弹窗关键路径（`attach_im_channels` 在 spawn 前、且三家 WS 串行连 → 冷启动 `im_attach` ≈450ms+），发送延迟当下因 `ch.start` 异步不进端到端、是「未来发送被改成阻塞」的探针。
+- **本地 mock IM 覆盖 legacy popup harness 渠道**：`perf-mock-im.mjs` 单进程同端口服务所需 HTTP OpenAPI + WebSocket。canonical config 启用钉钉/Telegram/Slack 并指向 mock；mock 让各 `Router::connect()` 成功并保活、接受发卡片，并对建连与发送各注入约 150ms 延迟。
 - **冷 + 热都跑（同一次执行）**：**cold** = 每轮前 `daemon stop --force`（daemon 冷启动 + IM 每轮重连，IM-on-path 延迟落在这里）；**warm** = daemon 保活、IM router 复用（稳态弹窗时延）。各跑固定轮次、丢固定 warmup，按 `perf_id` 聚合隔离 `perf.log`，分别出 cold/warm 两张表（中位/p90/min/max）。
 - 每次以 `ASKHUMAN_PERF=1 ASKHUMAN_PERF_AUTODISMISS=1` + 注入 `ASKHUMAN_PERF_SPAWN_TS` 拉起提问；弹窗画完首帧（双 `rAF` 的 `fe.painted`）即 `cancelPopup()` 自动退出。
 - **屏幕可见守卫**：`fe.painted` 在真实 WebView 里靠 `requestAnimationFrame`，而 macOS 在**锁屏 / 息屏 / 窗口被遮挡**时会暂停 rAF → 弹窗永不上屏、autodismiss 不触发。故 harness：启动前与每轮前用 `ioreg -n Root -d1 -r` 读 `CGSSessionScreenIsLocked`，**锁屏即报错不跑**；运行期开 `caffeinate -d` 防息屏；任一轮弹窗未上屏（超时）即判定数据无效、报错中止（不产坏数据）。→ 跑测时请保持屏幕解锁、唤醒、勿遮挡弹窗。

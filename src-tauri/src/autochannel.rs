@@ -12,7 +12,7 @@ use serde_json::Value;
 /// 持久化的活跃槽。
 #[derive(Default, Serialize, Deserialize)]
 struct Persisted {
-    /// 当前活跃渠道 id（"feishu" / "dingding" / "telegram" / "slack" / "popup"）；
+    /// Current active channel id.
     /// None / "popup" = 不向任何 IM 发卡片（只弹窗）。在哪个渠道作答 / 说话就更新为哪个。
     #[serde(default)]
     channel: Option<String>,
@@ -802,7 +802,6 @@ pub fn channel_label(id: &str, lang: Lang) -> String {
         "popup" => "channel.sourcePopup",
         "telegram" => "channel.sourceTelegram",
         "dingding" => "channel.sourceDingTalk",
-        "feishu" => "channel.sourceFeishu",
         "slack" => "channel.sourceSlack",
         other => return other.to_string(),
     };
@@ -935,7 +934,7 @@ pub fn status_detail_text(snapshot: &Value, id: u64, prefix: &str, lang: Lang) -
             out.push_str(&render_step(step, lang));
         }
     }
-    // TODO 清单摘要（纯文本渠道只给一行；完整清单是飞书 watch 卡折叠面板的能力）。
+    // TODO 清单摘要（纯文本渠道只给一行）。
     if let Some(s) = todo_summary(&parts.todos, lang) {
         out.push('\n');
         out.push_str(&s);
@@ -944,7 +943,7 @@ pub fn status_detail_text(snapshot: &Value, id: u64, prefix: &str, lang: Lang) -
 }
 
 /// TODO 清单摘要行：`📋 清单 4/7 · 当前：xxx`（无进行中条目省略「当前」段；空清单 → None）。
-/// `/status` 纯文本与飞书 watch 卡折叠面板标题共用。
+/// `/status` 纯文本摘要标题。
 pub(crate) fn todo_summary(
     todos: &[crate::agents::activity::TodoItem],
     lang: Lang,
@@ -1176,7 +1175,6 @@ pub(crate) fn step_label_object(
 }
 
 /// `/status` 用纯文本步行：状态圆点（进行中 🟢 / 已完成 ⚪ / 失败 🔴）+ `类别词: 对象`。
-/// （飞书 watch 卡走 `watch::` 侧的彩色 `<font>` 圆点 + 粗体/斜体渲染，不经此函数。）
 pub(crate) fn render_step(step: &crate::agents::activity::ToolStep, lang: Lang) -> String {
     use crate::agents::activity::StepState;
     let dot = match step.state {
@@ -1480,16 +1478,16 @@ mod tests {
     fn help_text_uses_channel_prefix() {
         // Slack 展示 `!` 前缀（客户端拦截 `/`）；其余渠道 `/`。
         assert_eq!(cmd_prefix("slack"), "!");
-        assert_eq!(cmd_prefix("feishu"), "/");
+        assert_eq!(cmd_prefix("telegram"), "/");
         let slack = help_text(true, false, true, cmd_prefix("slack"), Lang::En);
         assert!(slack.contains("!status"));
         assert!(slack.contains("!watch"));
         assert!(slack.contains("!help"));
         assert!(!slack.contains("/status"));
         assert!(!slack.contains("{p}"));
-        let feishu = help_text(true, false, true, cmd_prefix("feishu"), Lang::En);
-        assert!(feishu.contains("/status"));
-        assert!(!feishu.contains("{p}"));
+        let telegram = help_text(true, false, true, cmd_prefix("telegram"), Lang::En);
+        assert!(telegram.contains("/status"));
+        assert!(!telegram.contains("{p}"));
     }
 
     #[test]

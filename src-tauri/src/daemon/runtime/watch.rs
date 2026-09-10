@@ -452,15 +452,6 @@ pub(super) async fn ensure_watch_route_for(
 ) {
     // 取该渠道的共享 Router（渠道不可用则跳过；订阅仍在，渠道恢复后下一拍补挂）。
     let router: WatchChannelRouter = match channel_id {
-        "feishu" => {
-            if !crate::app::is_feishu_active(config) {
-                return;
-            }
-            match ensure_fs_router(state, &config.channels.feishu).await {
-                Some(r) => WatchChannelRouter::Feishu(r),
-                None => return,
-            }
-        }
         "telegram" => {
             if !crate::app::is_telegram_active(config) {
                 return;
@@ -503,29 +494,6 @@ pub(super) async fn ensure_watch_route_for(
     // 重建：注册新路由认领全部卡，替换句柄并停旧任务（其 Routed* Drop 时自清路由表）。
     let stop = Arc::new(tokio::sync::Notify::new());
     let (router_ref, task): (WatchRouterRef, tokio::task::JoinHandle<()>) = match &router {
-        WatchChannelRouter::Feishu(r) => {
-            let mut routed = r.register();
-            for mid in &mids {
-                routed.set_active(Some(mid), "");
-            }
-            let st = state.clone();
-            let stop2 = stop.clone();
-            let task = tokio::spawn(async move {
-                loop {
-                    tokio::select! {
-                        _ = stop2.notified() => break,
-                        ev = routed.recv() => match ev {
-                            Some(crate::feishu::router::FsInbound::Card { data, ack }) => {
-                                handle_watch_card_action(&st, &data, ack);
-                            }
-                            Some(_) => {} // 未认领聊天消息，不会到达；防御性忽略。
-                            None => break, // Router 断开：下一拍 ensure 重建。
-                        },
-                    }
-                }
-            });
-            (WatchRouterRef::Feishu(Arc::downgrade(r)), task)
-        }
         WatchChannelRouter::Telegram(r) => {
             // 仅认领卡片回调（`set_card_route`），**不**认领自由文字——不得抢走提问卡答案。
             let routed = r.register();
@@ -617,121 +585,8 @@ pub(super) async fn ensure_watch_route_for(
     }
 }
 
-/// 处理 watch 卡按钮回调（取消关注 / 立即刷新）：经 oneshot **同步回新卡**——
-/// 按钮 Loading 直接变新帧 / 终态，无闪烁（复用提问卡的 callback_update_card 机制）。
-pub(super) fn handle_watch_card_action(
-    state: &Arc<ServerState>,
-    data: &serde_json::Value,
-    ack: crate::feishu::router::CardAck,
-) {
-    use crate::feishu::card::{build_watch_card, callback_update_card, WatchAction};
-    let Some((mid, action)) = crate::feishu::card::parse_watch_action(data) else {
-        let _ = ack.send(None);
-        return;
-    };
-    let entry = {
-        let subs = state.watch.subs.lock().unwrap();
-        subs.iter()
-            .find(|s| s.channel == "feishu" && s.message_id == mid)
-            .cloned()
-    };
-    let Some(entry) = entry else {
-        let _ = ack.send(None); // 已退订的卡（终态按钮本应禁用）：空 ACK。
-        return;
-    };
-    let lang = Lang::current();
-    let now = now_secs();
-    let snapshot = state.agents.snapshot();
-    let waiting = state
-        .registry
-        .in_flight_agent_session_ids()
-        .contains(&entry.session_id);
-    let rec = find_agent_by_session(&snapshot, &entry.session_id);
-    let frame = crate::watch::build_frame(entry.seq, rec, waiting);
-    let automatic_final = crate::watch::automatic_final_kind(&frame, rec, now);
-    match action {
-        WatchAction::Unwatch => {
-            let card = build_watch_card(&crate::watch::card_view(
-                &frame,
-                crate::watch::CardMode::Final(crate::watch::FinalKind::Cancelled),
-                now,
-                lang,
-                Some(&entry.session_id),
-            ));
-            let _ = ack.send(Some(callback_update_card(card)));
-            {
-                let mut subs = state.watch.subs.lock().unwrap();
-                if let Some(s) = subs.iter_mut().find(|s| s.message_id == mid) {
-                    s.rewatchable = true;
-                }
-            }
-            persist_watch_subs(state);
-            state.watch.notify.notify_one();
-        }
-        WatchAction::Refresh => {
-            let finalize = automatic_final.is_some();
-            let mode = automatic_final
-                .map(crate::watch::CardMode::Final)
-                .unwrap_or(crate::watch::CardMode::Active);
-            let card = build_watch_card(&crate::watch::card_view(&frame, mode, now, lang, None));
-            let _ = ack.send(Some(callback_update_card(card)));
-            {
-                let mut subs = state.watch.subs.lock().unwrap();
-                if finalize {
-                    subs.retain(|s| s.message_id != mid);
-                } else if let Some(s) = subs.iter_mut().find(|s| s.message_id == mid) {
-                    s.last_sig = crate::watch::signature(&frame);
-                    s.last_edit_ms = now_ms();
-                    s.fails = 0;
-                    s.working = frame.phase == crate::watch::WatchPhase::Working;
-                }
-            }
-            if finalize {
-                persist_watch_subs(state);
-            }
-            state.watch.notify.notify_one();
-        }
-        WatchAction::Rewatch(session_id) => {
-            // 旧卡立即 ACK 为「已重新关注」禁用态。
-            let card = build_watch_card(&crate::watch::card_view(
-                &frame,
-                crate::watch::CardMode::Final(crate::watch::FinalKind::Rewatched),
-                now,
-                lang,
-                None,
-            ));
-            let _ = ack.send(Some(callback_update_card(card)));
-            // 移除旧的 rewatchable entry。
-            state
-                .watch
-                .subs
-                .lock()
-                .unwrap()
-                .retain(|s| s.message_id != mid);
-            persist_watch_subs(state);
-            // 异步发新 watch 卡 + 激活渠道（复用 handle_watch_cmd 路径）。
-            let state = Arc::clone(state);
-            let sid = session_id;
-            tokio::spawn(async move {
-                let config = state.config_snapshot();
-                let lang = Lang::current();
-                activate_channel_on_action(&state, "feishu", &config, lang).await;
-                let snapshot = state.agents.snapshot();
-                let rec = find_agent_by_session(&snapshot, &sid);
-                let seq = rec
-                    .and_then(|r| r.get("seq").and_then(|v| v.as_u64()))
-                    .unwrap_or(0);
-                if seq == 0 {
-                    log("watch: rewatch target session not found, skipping");
-                    return;
-                }
-                handle_watch_cmd(&state, "feishu", Some(seq), &config, lang).await;
-            });
-        }
-    }
-}
-
-/// 非飞书渠道的 rewatch 统一处理：编辑旧卡为 Rewatched 终态，移除旧 entry，激活渠道，异步发新卡。
+/// Rewatch one legacy interactive channel subscription.
+/// Edit the old card to a terminal state, remove its entry, then start a new watch.
 pub(super) async fn handle_rewatch(state: &Arc<ServerState>, channel_id: &str, mid: &str) {
     let entry = {
         let subs = state.watch.subs.lock().unwrap();
@@ -793,8 +648,7 @@ pub(super) async fn handle_rewatch(state: &Arc<ServerState>, channel_id: &str, m
     });
 }
 
-/// 非飞书渠道的 watch 按钮统一处理：计算新帧并**就地编辑**卡片（这些渠道无「回调同步回卡」
-/// 机制，编辑即生效；飞书走 `handle_watch_card_action` 的 oneshot 回卡）。
+/// legacy interactive 渠道的 watch 按钮统一处理：计算新帧并**就地编辑**卡片。
 pub(super) async fn apply_watch_action(
     state: &Arc<ServerState>,
     channel_id: &str,

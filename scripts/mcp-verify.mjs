@@ -27,7 +27,7 @@ fs.copyFileSync(helper, path.join(binDir, 'imsg'));
 fs.chmodSync(path.join(binDir, 'imsg'), 0o755);
 fs.writeFileSync(path.join(configDir, 'config.json'), JSON.stringify({
   general: { language: 'en', menuBarIcon: 'off', popupPrewarm: false, historyLimit: 0 },
-  channels: { autoActivation: false, feishu: { enabled: false },
+  channels: { autoActivation: false,
     imessage: { enabled: true, recipient: 'synthetic@example.invalid', identityMode: 'same_account', chatId: 42, chatGuid: 'synthetic-direct-chat' } },
 }));
 const env = { ...process.env, HUMAN_IN_LOOP_HOME: configDir, ASKHUMAN_NO_KEYCHAIN: '1',

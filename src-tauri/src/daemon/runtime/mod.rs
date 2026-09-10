@@ -10,14 +10,12 @@ use crate::agents::registry::AgentRegistry;
 use crate::agents::{AgentKind, LifecycleEvent};
 use crate::app::confirm_coordinator::ConfirmOutcome;
 use crate::channels::dingding::DingTalkChannel;
-use crate::channels::feishu::FeishuChannel;
 use crate::channels::slack::SlackChannel;
 use crate::channels::telegram::TelegramChannel;
 use crate::channels::Channel;
 use crate::client;
 use crate::config::AppConfig;
 use crate::dingtalk::router::DdRouter;
-use crate::feishu::router::FsRouter;
 use crate::i18n::Lang;
 use crate::ipc::{
     self, transport, ClientMsg, ConfirmTask, DetectRequest, HelloAck, HelloStatus,
@@ -200,8 +198,6 @@ struct ServerState {
     popup_focus: Mutex<PopupFocusArbiter>,
     /// 钉钉长连接 Router（惰性建连、常热复用；连接死亡后按需重连）。
     dd_router: tokio::sync::Mutex<Option<Arc<DdRouter>>>,
-    /// 飞书长连接 Router（惰性建连、常热复用；连接死亡后按需重连）。
-    fs_router: tokio::sync::Mutex<Option<Arc<FsRouter>>>,
     /// Telegram 长轮询 Router（惰性建连、常热复用；单一 offset）。
     tg_router: tokio::sync::Mutex<Option<Arc<TgRouter>>>,
     /// Slack Socket Mode Router（惰性建连、常热复用；连接死亡后按需重连）。
@@ -231,9 +227,9 @@ struct ServerState {
     warm_pool: Mutex<Option<WarmSlot>>,
     /// 正在补热中（去重，避免并发 spawn 多个热实例）。
     warm_spawning: AtomicBool,
-    /// `/watch` 实时关注子系统（spec docs/specs/im-watch.md；飞书/Telegram/Slack）。
+    /// `/watch` 实时关注子系统（spec docs/specs/im-watch.md）。
     watch: WatchState,
-    /// 通用「单选卡」子系统（spec docs/specs/im-select-card.md；MVP 仅飞书）。
+    /// 通用「单选卡」子系统（spec docs/specs/im-select-card.md）。
     select: SelectState,
     /// IM-created launches waiting to be associated with their lifecycle session.
     pending_launches: Mutex<Vec<PendingLaunchWatch>>,
@@ -372,11 +368,11 @@ struct WatchState {
 /// 一条活动的 watch 订阅（引擎工作台账；持久化时压成 `watch::PersistedWatch`）。
 #[derive(Clone)]
 struct WatchEntry {
-    /// 卡片所在渠道 id（feishu / telegram / slack）。
+    /// 卡片所在渠道 id。
     channel: String,
     /// 被关注 agent 的 session_id（身份键）。
     session_id: String,
-    /// 实时状态卡的消息 id（编辑目标；跟底重发后换新）。渠道各异：飞书 open_message_id、
+    /// 实时状态卡的消息 id（编辑目标；跟底重发后换新）。渠道各异：
     /// Telegram message_id 十进制串、Slack 消息 ts、钉钉 outTrackId（自铸 uuid）。
     message_id: String,
     /// 展示编号（同 `/status`；daemon 生命周期内稳定，重启恢复时按 session 重解析）。
@@ -409,7 +405,6 @@ struct WatchRouteHandle {
 
 /// 路由任务绑定的 Router 弱引用（按渠道类型分列，用于「同一存活 Router」比对）。
 enum WatchRouterRef {
-    Feishu(std::sync::Weak<FsRouter>),
     Telegram(std::sync::Weak<TgRouter>),
     Slack(std::sync::Weak<SlRouter>),
     DingTalk(std::sync::Weak<DdRouter>),
@@ -419,10 +414,6 @@ impl WatchRouterRef {
     /// 是否仍绑定同一个存活的 Router 实例。
     fn is_same_alive(&self, ch: &WatchChannelRouter) -> bool {
         match (self, ch) {
-            (WatchRouterRef::Feishu(w), WatchChannelRouter::Feishu(r)) => w
-                .upgrade()
-                .map(|x| Arc::ptr_eq(&x, r) && x.is_alive())
-                .unwrap_or(false),
             (WatchRouterRef::Telegram(w), WatchChannelRouter::Telegram(r)) => w
                 .upgrade()
                 .map(|x| Arc::ptr_eq(&x, r) && x.is_alive())
@@ -442,7 +433,6 @@ impl WatchRouterRef {
 
 /// 某渠道当前的共享 Router（强引用，路由重建时用）。
 enum WatchChannelRouter {
-    Feishu(Arc<FsRouter>),
     Telegram(Arc<TgRouter>),
     Slack(Arc<SlRouter>),
     DingTalk(Arc<DdRouter>),
@@ -528,7 +518,7 @@ enum PickerKind {
     TodoAuto,
     /// 待办自动执行切换卡：`options`＝待办条目 id，`payload`＝项目 key；点「切换」即开/关并就地刷新。
     TodoAutoEntry,
-    /// 待办管理卡（飞书代码卡 / 钉钉提问卡模板）：无行按钮，仅表单「新增」提交；`payload`＝项目 key。
+    /// 待办管理卡：无行按钮，仅表单「新增」提交；`payload`＝项目 key。
     TodoManage,
     /// `/yolo` 的会话选择卡（D53）：选项＝开着 YOLO 的 Codex session id，点「关闭」即关。
     Yolo,
@@ -859,7 +849,6 @@ async fn serve(_lock: LockGuard) -> i32 {
         notification_cancel: tokio_util::sync::CancellationToken::new(),
         popup_focus: Mutex::new(PopupFocusArbiter::new()),
         dd_router: tokio::sync::Mutex::new(None),
-        fs_router: tokio::sync::Mutex::new(None),
         tg_router: tokio::sync::Mutex::new(None),
         sl_router: tokio::sync::Mutex::new(None),
         config: Mutex::new(AppConfig::load()),
@@ -1112,7 +1101,6 @@ async fn serve(_lock: LockGuard) -> i32 {
     // 收尾：主动丢弃常热 Router（其 Drop 中止 reader 任务、关闭 IM 长连接），再清理 socket/meta。
     // 进行中的请求各自持有 Router Arc 克隆，故仅在无人持有时才真正断连。
     *state.dd_router.lock().await = None;
-    *state.fs_router.lock().await = None;
     *state.tg_router.lock().await = None;
     *state.sl_router.lock().await = None;
     cleanup();
@@ -1975,7 +1963,7 @@ async fn handle_submit_confirm(
     entry.cancel.notify_waiters();
     state.registry.remove_confirm(&request_id);
     broadcast_tray_state(state);
-    for channel in ["feishu", "imessage"] {
+    for channel in ["imessage"] {
         if entry.has_delivery(channel) {
             for subscription in state
                 .watch
@@ -2245,7 +2233,7 @@ async fn handle_submit(
     crate::perf::mark(&perf_id, "dmn.im_done");
     // /watch 跟底：提问卡即将出现在渠道会话里，是一次「非 watch」扰动（提问期间跟底被抑制，
     // 这里先记水位线，供答复完结后立即跟底）。
-    for ch in ["feishu", "telegram", "slack"] {
+    for ch in ["telegram", "slack"] {
         if entry.coordinator.has_channel(ch) {
             mark_watch_disturbed(state, ch);
         }
@@ -2402,7 +2390,7 @@ async fn finish_request_bookkeeping(
     // （用户定案：答完能马上在底部看到自己的回答产生的更新）。**不**标记扰动——作答本身
     // 只是就地编辑提问卡、不产生新消息；提问期间新发的 watch 卡仍在底部，重发只会造出
     // 连续两张卡（验收反馈修正）。淹没判定完全依据提问卡发出时刻（attach 处已标记）。
-    for ch in ["feishu", "telegram", "slack"] {
+    for ch in ["telegram", "slack"] {
         if entry.coordinator.has_channel(ch) {
             for s in state
                 .watch
@@ -2969,33 +2957,6 @@ async fn ensure_dd_router(
     }
 }
 
-/// 取得（必要时惰性建连）飞书 Router；连接已死则重连。失败返回 None。
-async fn ensure_fs_router(
-    state: &Arc<ServerState>,
-    cfg: &crate::config::FeishuChannelConfig,
-) -> Option<Arc<FsRouter>> {
-    let mut guard = state.fs_router.lock().await;
-    if let Some(r) = guard.as_ref() {
-        if r.is_alive() {
-            return Some(r.clone());
-        }
-    }
-    match FsRouter::connect(cfg).await {
-        Ok(r) => {
-            log("feishu router connected");
-            crate::channels::health::clear("feishu");
-            *guard = Some(r.clone());
-            Some(r)
-        }
-        Err(e) => {
-            log(&format!("feishu router connect failed: {}", e));
-            crate::channels::health::report("feishu", e);
-            *guard = None;
-            None
-        }
-    }
-}
-
 /// 取得（必要时惰性建连）Telegram Router；轮询器已停则重建。失败返回 None。
 async fn ensure_tg_router(
     state: &Arc<ServerState>,
@@ -3153,20 +3114,15 @@ async fn agent_kind_for_im(
     }
 }
 
-/// 是否启用了任一 IM 渠道（仅看非密钥的 `enabled` 标志）。用于方案4 在读钥匙串前的廉价门控：
-/// 可安全用 `load_without_secrets()` 的结果判定（`enabled` 不是密钥）。
+/// Whether the maintained remote confirmation channel is enabled.
 fn any_im_enabled(config: &AppConfig) -> bool {
-    let ch = &config.channels;
-    ch.feishu.enabled
+    config.channels.imessage.enabled
 }
 
-/// 当前配置完整、可实际投递的 IM 渠道，顺序与既有投递顺序一致。
+/// Current configured remote channels used by legacy free-form flows.
 fn available_im_channels(config: &AppConfig) -> Vec<&'static str> {
-    let mut available = Vec::new();
-    if crate::app::is_feishu_active(config) {
-        available.push("feishu");
-    }
-    available
+    let _ = config;
+    Vec::new()
 }
 
 fn available_confirm_channels(config: &AppConfig) -> Vec<&'static str> {
@@ -3300,33 +3256,6 @@ async fn attach_im_channels(
         }
     }
 
-    if candidates.contains(&"feishu") {
-        let fs = &config.channels.feishu;
-        match ensure_fs_router(state, fs).await {
-            Some(router) => {
-                let ch: Arc<dyn Channel> = Arc::new(FeishuChannel::shared(fs.clone(), router));
-                entry.coordinator.register(ch.clone());
-                let origin = im_conversation_origin(entry, agent_kind);
-                ch.start(&request, &origin, sink.clone());
-                attached = true;
-            }
-            None => {
-                let _ = ipc::write_msg(
-                    w,
-                    &ServerMsg::Warn {
-                        text: format!(
-                            "{}{}",
-                            crate::i18n::warn_prefix(lang),
-                            crate::i18n::tr(lang, "channel.fsConfigInvalidSkip")
-                                .replace("{e}", "WebSocket connection failed"),
-                        ),
-                    },
-                )
-                .await;
-            }
-        }
-    }
-
     if candidates.contains(&"telegram") {
         let tg = &config.channels.telegram;
         match ensure_tg_router(state, tg).await {
@@ -3426,16 +3355,6 @@ fn initialize_confirm_availability(
         },
     );
     entry.set_availability(
-        "feishu",
-        if !config.channels.feishu.enabled {
-            AvailabilityReason::Disabled
-        } else if !crate::app::is_feishu_active(config) {
-            AvailabilityReason::NotConfigured
-        } else {
-            AvailabilityReason::Unavailable
-        },
-    );
-    entry.set_availability(
         "imessage",
         if !config.channels.imessage.enabled {
             AvailabilityReason::Disabled
@@ -3449,29 +3368,16 @@ fn initialize_confirm_availability(
 
 async fn attach_confirm_im_channels(
     entry: &Arc<request::ConfirmEntry>,
-    state: &Arc<ServerState>,
+    _state: &Arc<ServerState>,
     config: &AppConfig,
     candidates: &[&str],
 ) {
     for channel in candidates {
-        match *channel {
-            "feishu" => match ensure_fs_router(state, &config.channels.feishu).await {
-                Some(router) => crate::channels::confirm::start_feishu(
-                    entry.clone(),
-                    config.channels.feishu.clone(),
-                    router,
-                ),
-                None => {
-                    if entry.mark_failed("feishu", "Feishu router unavailable") {
-                        entry.fallback_no_available_channel();
-                    }
-                }
-            },
-            "imessage" => crate::channels::confirm::start_imessage(
+        if *channel == "imessage" {
+            crate::channels::confirm::start_imessage(
                 entry.clone(),
                 config.channels.imessage.clone(),
-            ),
-            _ => {}
+            )
         }
     }
 }
@@ -3487,10 +3393,8 @@ struct Inbound {
 }
 
 /// watch 卡的渠道传输：发送 / 就地编辑一张实时状态卡，屏蔽各渠道 API 与标记语言差异。
-/// 渲染入口各渠道自备（飞书 `watch::card_view`+`build_watch_card`、Telegram HTML、
-/// Slack Block Kit），消息 id 编码见 `WatchEntry::message_id`。
+/// Rendering is transport-specific; message-id encoding is documented by each adapter.
 enum WatchClient {
-    Feishu(crate::feishu::client::FeishuClient),
     Telegram(crate::telegram::TelegramClient),
     Slack {
         client: crate::slack::client::SlackClient,
@@ -3526,9 +3430,6 @@ impl WatchClient {
     /// 按渠道构造。渠道未配置/不可用 → None（该渠道订阅本拍跳过，下一拍重试）。
     async fn for_channel(channel_id: &str, config: &AppConfig) -> Option<WatchClient> {
         match channel_id {
-            "feishu" => crate::feishu::client::FeishuClient::new(&config.channels.feishu)
-                .ok()
-                .map(WatchClient::Feishu),
             "telegram" => {
                 let tg = &config.channels.telegram;
                 crate::telegram::TelegramClient::new(
@@ -3552,8 +3453,7 @@ impl WatchClient {
     }
 
     /// 每卡最短编辑间隔（毫秒）。Slack `chat.update` 限频更紧（Tier 3 ≈50/min），取 2s
-    /// （计划 R5 定案；签名门控使实际编辑远稀于理论上限）；飞书 PATCH / Telegram
-    /// editMessageText / 钉钉实例更新（PoC 实测 2s×150 连发零频控，p50 ≈60–95ms）取 1s。
+    /// （计划 R5 定案；签名门控使实际编辑远稀于理论上限）；other adapters use 1s.
     fn min_edit_interval_ms(&self) -> u64 {
         match self {
             WatchClient::Slack { .. } => 2000,
@@ -3570,12 +3470,6 @@ impl WatchClient {
         lang: Lang,
     ) -> Result<String, String> {
         match self {
-            WatchClient::Feishu(c) => {
-                let card = crate::feishu::card::build_watch_card(&crate::watch::card_view(
-                    frame, mode, now, lang, None,
-                ));
-                c.send_card(&card).await.map_err(|e| e.to_string())
-            }
             WatchClient::Telegram(c) => {
                 // 先按 mode 取 markup（借用），再把 mode 交给渲染（CardMode 非 Copy）。
                 let markup = matches!(mode, crate::watch::CardMode::Active)
@@ -3622,14 +3516,6 @@ impl WatchClient {
         session_id: Option<&str>,
     ) -> Result<(), String> {
         match self {
-            WatchClient::Feishu(c) => {
-                let card = crate::feishu::card::build_watch_card(&crate::watch::card_view(
-                    frame, mode, now, lang, session_id,
-                ));
-                c.patch_card(message_id, &card)
-                    .await
-                    .map_err(|e| e.to_string())
-            }
             WatchClient::Telegram(c) => {
                 let mid: i64 = message_id
                     .parse()
@@ -3694,16 +3580,6 @@ async fn active_im_connections(state: &Arc<ServerState>) -> Vec<String> {
         .unwrap_or(false)
     {
         v.push("dingtalk".to_string());
-    }
-    if state
-        .fs_router
-        .lock()
-        .await
-        .as_ref()
-        .map(|r| r.is_alive())
-        .unwrap_or(false)
-    {
-        v.push("feishu".to_string());
     }
     if state
         .tg_router
@@ -3990,8 +3866,7 @@ fn sync_daemon_login_item() {
 /// 且旧请求未结束时新请求又到达，可能短暂出现两条同 client_id 连接（平台会踢掉旧的）——
 /// 属配置在「问题进行中」被改动的少见边角，可接受。
 ///
-/// 入站监听单独处理：除凭据变更（连带 Router）外，**收件人 id 变更**（feishu open_id /
-/// dingding·slack user_id / telegram chat_id，即监听的 expected_sender）也需停旧监听——否则监听
+/// 入站监听单独处理：除凭据变更（连带 Router）外，收件人 id 变更也需停旧监听——否则监听
 /// 仍用旧过滤条件绑在旧连接上，`on_config_changed` 随后会按新配置重建（`stop_listener` 释放认领）。
 async fn invalidate_changed_routers(state: &Arc<ServerState>, old: &AppConfig, new: &AppConfig) {
     let dd_router_changed = !crate::app::is_dingding_active(new)
@@ -4002,22 +3877,6 @@ async fn invalidate_changed_routers(state: &Arc<ServerState>, old: &AppConfig, n
     }
     if dd_router_changed || old.channels.dingding.user_id != new.channels.dingding.user_id {
         stop_listener(state, "dingding");
-    }
-
-    let fs_router_changed = !crate::app::is_feishu_active(new)
-        || old.channels.feishu.app_id != new.channels.feishu.app_id
-        || old.channels.feishu.app_secret != new.channels.feishu.app_secret
-        || old.channels.feishu.base_url != new.channels.feishu.base_url;
-    if fs_router_changed {
-        crate::feishu::token::invalidate_credentials(
-            &old.channels.feishu.base_url,
-            &old.channels.feishu.app_id,
-            &old.channels.feishu.app_secret,
-        );
-        *state.fs_router.lock().await = None;
-    }
-    if fs_router_changed || old.channels.feishu.open_id != new.channels.feishu.open_id {
-        stop_listener(state, "feishu");
     }
 
     let tg_router_changed = !crate::app::is_telegram_active(new)
@@ -4202,7 +4061,7 @@ mod tests {
             .unwrap();
             let (entry, mut rx) = super::request::create_internal_confirm(
                 spec,
-                "feishu",
+                "telegram",
                 "en",
                 "",
                 "Codex",
@@ -4247,7 +4106,7 @@ mod tests {
                     };
                     assert_eq!(result.action_id, "continue");
                     assert_eq!(result.source_channel_id, "imessage");
-                    assert!(!entry.coordinator.submit_wire(1, None, "feishu").unwrap());
+                    assert!(!entry.coordinator.submit_wire(1, None, "telegram").unwrap());
                 }
                 _ => unreachable!(),
             }
@@ -4280,7 +4139,7 @@ mod tests {
 
     #[test]
     fn im_delivery_falls_back_only_when_popup_cannot_receive() {
-        let available = ["feishu", "imessage"];
+        let available = ["telegram", "imessage"];
         let none = Vec::<String>::new();
 
         assert_eq!(
@@ -4306,10 +4165,10 @@ mod tests {
 
     #[test]
     fn im_delivery_prefers_valid_active_and_watch_candidates() {
-        let available = ["feishu", "imessage"];
+        let available = ["telegram", "imessage"];
         assert_eq!(
-            select_im_delivery_candidates(true, &available, Some("feishu"), &[], false),
-            vec!["feishu"]
+            select_im_delivery_candidates(true, &available, Some("telegram"), &[], false),
+            vec!["telegram"]
         );
         assert_eq!(
             select_im_delivery_candidates(
@@ -4325,11 +4184,11 @@ mod tests {
             select_im_delivery_candidates(
                 true,
                 &available,
-                Some("feishu"),
+                Some("telegram"),
                 &["imessage".to_string()],
                 false,
             ),
-            vec!["feishu", "imessage"]
+            vec!["telegram", "imessage"]
         );
     }
 
@@ -4371,14 +4230,14 @@ mod tests {
     #[test]
     fn inbound_claim_is_exclusive() {
         let reg = InboundRegistry::default();
-        let a = reg.claim("feishu").expect("first claim succeeds");
+        let a = reg.claim("telegram").expect("first claim succeeds");
         assert!(
-            reg.claim("feishu").is_none(),
+            reg.claim("telegram").is_none(),
             "a second claim is blocked while the first is held"
         );
-        reg.release("feishu", &a);
+        reg.release("telegram", &a);
         assert!(
-            reg.claim("feishu").is_some(),
+            reg.claim("telegram").is_some(),
             "the channel can be re-claimed once the owner releases it"
         );
     }
@@ -4388,28 +4247,28 @@ mod tests {
         // 配置变更场景：take 出旧 stop 释放认领 → 新监听重新认领 → 旧任务**之后**才退出并尝试
         // 释放。释放必须按身份判定，绝不能把「新监听」的认领误删（否则会重复 spawn）。
         let reg = InboundRegistry::default();
-        let old = reg.claim("feishu").expect("old listener claims");
+        let old = reg.claim("telegram").expect("old listener claims");
         let taken = reg
-            .take("feishu")
+            .take("telegram")
             .expect("config change takes current stop");
         assert!(Arc::ptr_eq(&old, &taken));
         let new = reg
-            .claim("feishu")
+            .claim("telegram")
             .expect("new listener re-claims after take");
-        reg.release("feishu", &old); // 旧任务迟到的释放
+        reg.release("telegram", &old); // 旧任务迟到的释放
         assert!(
-            reg.claim("feishu").is_none(),
+            reg.claim("telegram").is_none(),
             "the new listener's claim must survive a stale release from the old task"
         );
-        reg.release("feishu", &new);
-        assert!(reg.claim("feishu").is_some());
+        reg.release("telegram", &new);
+        assert!(reg.claim("telegram").is_some());
     }
 
     #[test]
     fn pending_launch_matches_id_or_prompt_hash_but_requires_kind_and_cwd() {
         let item = PendingLaunchWatch {
             id: "launch-1".into(),
-            channel: Some("feishu".into()),
+            channel: Some("telegram".into()),
             kind: AgentKind::Codex,
             cwd: "/tmp/project".into(),
             task_sha256: "hash-1".into(),

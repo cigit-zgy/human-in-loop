@@ -4,7 +4,7 @@
 //! 按钮「<动作> [编号]」，点击即触发（`callback_data=sel:<idx>`，idx=选项下标；daemon 侧按下标映射回
 //! session_id，避开 64 字节 callback_data 上限与 seq 漂移）。
 //!
-//! 点选后（daemon 侧）：`/watch` 就地把本消息编辑成实时 watch 卡（editMessageText，与飞书就地变身一致）；
+//! 点选后（daemon 侧）：`/watch` 就地把本消息编辑成实时 watch 卡（editMessageText）；
 //! `/status` 回文本详情、卡不动；`/unwatch` 旧卡定格 + 就地刷新本卡（移除该项 / 取 0 定格）。
 
 use crate::i18n::Lang;

@@ -457,15 +457,6 @@ async fn start_fork_input(
         return;
     };
     let started = match channel_id {
-        "feishu" => ensure_fs_router(state, &config.channels.feishu)
-            .await
-            .map(|router| {
-                crate::channels::confirm::start_feishu(
-                    entry.clone(),
-                    config.channels.feishu.clone(),
-                    router,
-                );
-            }),
         "dingding" => ensure_dd_router(
             state,
             config.channels.dingding.client_id.trim(),

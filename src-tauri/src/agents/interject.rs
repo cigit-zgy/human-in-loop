@@ -706,8 +706,8 @@ mod tests {
     fn queued_append_records_receipt_channels_deduped() {
         let s = InterjectStore::new();
         // 排队（无 hook 在等）→ 登记来源渠道；同渠道去重、不同渠道累加。
-        assert_eq!(s.append("s1", "a", Vec::new(), Some("feishu")), 1);
-        assert_eq!(s.append("s1", "b", Vec::new(), Some("feishu")), 2);
+        assert_eq!(s.append("s1", "a", Vec::new(), Some("imessage")), 1);
+        assert_eq!(s.append("s1", "b", Vec::new(), Some("imessage")), 2);
         assert_eq!(s.append("s1", "c", Vec::new(), Some("telegram")), 3);
         match s.poll("s1") {
             PollOutcome::Message {
@@ -717,7 +717,7 @@ mod tests {
                 assert_eq!(delivery.text, "a\n\nb\n\nc");
                 assert_eq!(
                     receipt_channels,
-                    vec!["feishu".to_string(), "telegram".to_string()]
+                    vec!["imessage".to_string(), "telegram".to_string()]
                 );
             }
             _ => panic!("expected message"),
@@ -734,7 +734,7 @@ mod tests {
             panic!("expected hold")
         };
         // 有 hook 在等 → 立即送达（返回 0），不登记回执。
-        assert_eq!(s.append("s1", "hi", Vec::new(), Some("feishu")), 0);
+        assert_eq!(s.append("s1", "hi", Vec::new(), Some("imessage")), 0);
         assert!(matches!(
             rx.blocking_recv().unwrap(),
             WaitOutcome::Message(_)
@@ -745,7 +745,7 @@ mod tests {
     fn overwrite_revoke_end_drop_receipt_channels() {
         for op in ["submit", "clear", "remove"] {
             let s = InterjectStore::new();
-            s.append("s1", "queued", Vec::new(), Some("feishu"));
+            s.append("s1", "queued", Vec::new(), Some("imessage"));
             match op {
                 "submit" => {
                     s.submit("s1", "gui text", Vec::new());
@@ -775,7 +775,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("ah-interject-rc-{}", uuid::Uuid::new_v4()));
         let path = dir.join("interject.json");
         let s = InterjectStore::new();
-        s.append("s1", "a", Vec::new(), Some("feishu"));
+        s.append("s1", "a", Vec::new(), Some("imessage"));
         s.append("s1", "b", Vec::new(), Some("slack"));
         s.persist_to(&path);
         let restored = InterjectStore::load_from(&path);
@@ -784,7 +784,7 @@ mod tests {
                 receipt_channels, ..
             } => assert_eq!(
                 receipt_channels,
-                vec!["feishu".to_string(), "slack".to_string()]
+                vec!["imessage".to_string(), "slack".to_string()]
             ),
             _ => panic!("expected message"),
         }
@@ -845,7 +845,7 @@ mod tests {
             "s1",
             "first",
             vec![attachment("/tmp/a.png")],
-            Some("feishu"),
+            Some("imessage"),
         );
         let PollOutcome::Message {
             delivery,
@@ -863,7 +863,7 @@ mod tests {
             } => {
                 assert_eq!(delivery.text, "first\n\nlater");
                 assert_eq!(delivery.attachments, vec![attachment("/tmp/a.png")]);
-                assert_eq!(receipt_channels, vec!["feishu", "slack"]);
+                assert_eq!(receipt_channels, vec!["imessage", "slack"]);
             }
             _ => panic!("expected message"),
         }

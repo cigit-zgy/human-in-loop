@@ -1,7 +1,7 @@
 //! Local STDIO MCP server exposing blocking `ask_human` and one-way `notify_human`.
 //!
 //! The handler submits the existing structured `ConfirmTask` IPC request and therefore reuses the
-//! daemon's canonical coordinator and configured Feishu/iMessage sessions. The input stream is
+//! daemon's canonical coordinator and configured iMessage session. The input stream is
 //! cancellation-aware so a client disconnect reaches the same request-owned cleanup path as an
 //! explicit MCP cancellation.
 

@@ -426,7 +426,7 @@ export default {
     },
     agentTasks: {
       title: "Create Agent tasks from IM",
-      description: "Use /new in Feishu to choose a workspace and Agent, then continue the visible session in a new system terminal window. Enabling this keeps the daemon available and installs its login item.",
+      description: "Use /new over a supported interactive integration to choose a workspace and Agent, then continue the visible session in a new system terminal window. Enabling this keeps the daemon available and installs its login item.",
       permission: "Permission selection",
       permissionAsk: "Ask every time",
       permissionDefault: "Always Agent default",
@@ -489,17 +489,10 @@ export default {
       autoDetect: "Auto-detect",
       detecting: "Detecting…",
       detectCancel: "Cancel",
-      feishuTitle: "Feishu",
       recommendedBadge: "Recommended",
       appId: "App ID",
       appSecret: "App Secret",
       openId: "Open ID",
-      feishuDetectHint:
-        "Use the target Feishu account to DM the bot with: {code} (valid for 120s)",
-      feishuDetected: "Detected and filled Open ID: {openId}",
-      feishuBaseUrl: "Service domain",
-      feishuBaseUrlPlaceholder:
-        "Leave empty for Feishu (open.feishu.cn); use open.larksuite.com for Lark",
       imessageTitle: "Apple Messages (iMessage only)",
       imessageDescription:
         "Uses the external imsg CLI and always disables SMS fallback. Only bounded structured confirmations are delivered.",
@@ -643,7 +636,6 @@ export default {
     channel: {
       popup: "Popup",
       dingding: "DingTalk",
-      feishu: "Feishu",
       telegram: "Telegram",
       slack: "Slack",
       caller: "Caller",

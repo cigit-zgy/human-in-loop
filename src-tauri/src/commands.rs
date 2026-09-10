@@ -1525,75 +1525,26 @@ pub async fn resolve_history_session_titles(
 
 // ===== 设置页命令 =====
 
-/// Whether each channel secret is currently configured (keychain or plaintext fallback). Drives
-/// the settings page "Saved" placeholder without ever exposing the secret value.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SecretsPresent {
-    feishu_secret: bool,
-}
-
-/// Settings payload: the config with secrets blanked, plus per-secret presence flags.
+/// Settings payload for the maintained local and iMessage configuration.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsPayload {
     config: AppConfig,
-    secrets_present: SecretsPresent,
-}
-
-/// Per-secret edit intent sent by the settings page on save. The secret value never round-trips
-/// through the config object; it is carried only here (and only for `set`).
-#[derive(Deserialize, Default)]
-#[serde(tag = "kind", rename_all = "lowercase")]
-pub enum SecretAction {
-    /// Keep the stored secret as-is (the user did not touch the field).
-    #[default]
-    Unchanged,
-    /// Replace the stored secret with `value`.
-    Set { value: String },
-    /// Delete the stored secret from the keychain.
-    Clear,
-}
-
-#[derive(Deserialize, Default)]
-#[serde(rename_all = "camelCase", default)]
-pub struct SecretActions {
-    feishu_secret: SecretAction,
 }
 
 #[tauri::command]
 pub fn get_settings() -> SettingsPayload {
-    let mut config = AppConfig::load();
-    // Presence is derived from the resolved value (keychain first, plaintext fallback).
-    let secrets_present = SecretsPresent {
-        feishu_secret: !config.channels.feishu.app_secret.is_empty(),
-    };
-    // Never let resolved secrets reach the UI; the page shows a fixed-length placeholder instead.
-    config.channels.feishu.app_secret.clear();
     SettingsPayload {
-        config,
-        secrets_present,
+        config: AppConfig::load(),
     }
 }
 
 #[tauri::command]
-pub async fn save_settings(
-    app: AppHandle,
-    mut config: AppConfig,
-    secret_actions: SecretActions,
-) -> Result<(), String> {
+pub async fn save_settings(app: AppHandle, mut config: AppConfig) -> Result<(), String> {
     if config.agent_tasks.enabled {
         config.general.daemon_lifecycle = crate::config::DaemonLifecycleMode::KeepAlive;
         crate::integrations::login_item::sync_daemon(true).map_err(|e| e.to_string())?;
     }
-    // Secrets are governed solely by the explicit actions (the incoming config carries blank
-    // placeholders). unchanged → leave the field empty so save() won't touch the keychain;
-    // set → store it via save(); clear → delete from the keychain now.
-    apply_secret_action(
-        &mut config.channels.feishu.app_secret,
-        crate::secrets::ACCOUNT_FEISHU_SECRET,
-        secret_actions.feishu_secret,
-    );
     config.save().map_err(|e| e.to_string())?;
     if config.agent_tasks.enabled {
         crate::client::ensure_running()
@@ -2034,18 +1985,6 @@ pub async fn fork_task_launch(
     result
 }
 
-/// Apply one secret's edit intent to the in-memory config field before persisting.
-fn apply_secret_action(field: &mut String, account: &str, action: SecretAction) {
-    match action {
-        SecretAction::Unchanged => field.clear(),
-        SecretAction::Set { value } => *field = value,
-        SecretAction::Clear => {
-            let _ = crate::secrets::delete(account);
-            field.clear();
-        }
-    }
-}
-
 /// Resolve the secret to use for a test/detect call. The settings form sends an empty secret when
 /// the user kept the "Saved" placeholder; fall back to the effective secret (keychain or plaintext
 /// config fallback) so they need not retype it. A non-empty `provided` always wins.
@@ -2227,7 +2166,7 @@ pub fn popup_im_tip_visible() -> bool {
         return false;
     }
     let ch = AppConfig::load_without_secrets().channels;
-    !(ch.telegram.enabled || ch.dingding.enabled || ch.feishu.enabled || ch.slack.enabled)
+    !(ch.telegram.enabled || ch.dingding.enabled || ch.imessage.enabled || ch.slack.enabled)
 }
 
 /// 永久关闭「配置 IM 渠道」引导（点 ✕ 或点「打开设置」时调用）。
@@ -3254,171 +3193,6 @@ pub async fn dingtalk_detect_wait(args: DingTalkWaitArgs) -> Result<String, Stri
     .await
 }
 
-// ===== 飞书测试连接 / open_id 自动识别 =====
-
-use crate::config::FeishuChannelConfig;
-use crate::feishu::client::FeishuClient;
-use crate::feishu::ws::{FeishuWs, WsEvent};
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FeishuTestArgs {
-    pub app_id: String,
-    pub app_secret: String,
-    pub open_id: String,
-    pub base_url: String,
-}
-
-/// 测试连接：换 token（校验 AppId/Secret）+ 向 open_id 单聊发一条测试消息。
-#[tauri::command]
-pub async fn feishu_test(args: FeishuTestArgs) -> Result<String, String> {
-    let lang = crate::i18n::Lang::current();
-    if args.open_id.trim().is_empty() {
-        return Err(crate::i18n::tr(lang, "cmd.fillOpenId").to_string());
-    }
-    let app_secret = fallback_secret(&args.app_secret, |c| c.channels.feishu.app_secret.clone());
-    let cfg = FeishuChannelConfig {
-        enabled: true,
-        app_id: args.app_id,
-        app_secret,
-        open_id: args.open_id,
-        base_url: args.base_url,
-    };
-    let client = FeishuClient::new(&cfg).map_err(|e| e.localized(lang))?;
-    client
-        .send_text(crate::i18n::tr(lang, "cmd.fsTestRemote"))
-        .await
-        .map_err(|e| e.localized(lang))?;
-    Ok(crate::i18n::tr(lang, "cmd.fsTestSent").to_string())
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FeishuDetectArgs {
-    pub app_id: String,
-    pub app_secret: String,
-    pub base_url: String,
-}
-
-/// 自动识别准备：校验 AppId/Secret（换 token），通过后返回供用户私聊发送的 4 位识别码。
-#[tauri::command]
-pub async fn feishu_detect_prepare(args: FeishuDetectArgs) -> Result<String, String> {
-    let lang = crate::i18n::Lang::current();
-    let app_id = args.app_id.trim();
-    let secret = fallback_secret(&args.app_secret, |c| c.channels.feishu.app_secret.clone());
-    let app_secret = secret.trim();
-    if app_id.is_empty() || app_secret.is_empty() {
-        return Err(crate::i18n::tr(lang, "cmd.fillAppIdSecret").to_string());
-    }
-    let base_url = effective_feishu_base(&args.base_url);
-    let http = reqwest::Client::new();
-    crate::feishu::token::get_token(&http, &base_url, app_id, app_secret)
-        .await
-        .map_err(|e| e.localized(lang))?;
-    Ok(gen_detect_code())
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FeishuWaitArgs {
-    pub app_id: String,
-    pub app_secret: String,
-    pub base_url: String,
-    pub code: String,
-}
-
-/// 自动识别等待：开长连接，等到内容等于识别码的单聊消息，返回发送者 open_id。120 秒超时报错。
-#[tauri::command]
-pub async fn feishu_detect_wait(args: FeishuWaitArgs) -> Result<String, String> {
-    use std::time::Duration;
-    let lang = crate::i18n::Lang::current();
-    let app_id = args.app_id.trim().to_string();
-    let secret = fallback_secret(&args.app_secret, |c| c.channels.feishu.app_secret.clone());
-    let app_secret = secret.trim().to_string();
-    if app_id.is_empty() || app_secret.is_empty() {
-        return Err(crate::i18n::tr(lang, "cmd.fillAppIdSecret").to_string());
-    }
-    let code = args.code.trim().to_string();
-    if code.is_empty() {
-        return Err(crate::i18n::tr(lang, "cmd.detectCodeInvalid").to_string());
-    }
-    let base_url = effective_feishu_base(&args.base_url);
-
-    detect_with_cancel(lang, async move {
-        // Q6：经 Daemon 长连接识别（见钉钉同段说明）。
-        {
-            let req = crate::ipc::DetectRequest {
-                kind: "feishu".to_string(),
-                app_key: app_id.clone(),
-                app_secret: app_secret.clone(),
-                base_url: base_url.clone(),
-                code: code.clone(),
-                lang: lang.code().to_string(),
-            };
-            if let Some(result) = crate::client::request_detect(req).await {
-                return result;
-            }
-        }
-
-        let http = reqwest::Client::new();
-        let mut ws = FeishuWs::connect(http, &base_url, &app_id, &app_secret)
-            .await
-            .map_err(|e| e.localized(lang))?;
-
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
-        loop {
-            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            if remaining.is_zero() {
-                return Err(crate::i18n::tr(lang, "cmd.detectTimeout").to_string());
-            }
-            match tokio::time::timeout(remaining, ws.recv()).await {
-                Ok(Some(WsEvent::Message(event))) => {
-                    if let Some((open_id, text)) = feishu_text_and_sender(&event) {
-                        if text.trim() == code {
-                            return Ok(open_id);
-                        }
-                    }
-                }
-                Ok(Some(_)) => {}
-                Ok(None) => return Err(crate::i18n::tr(lang, "cmd.streamDisconnected").to_string()),
-                Err(_) => return Err(crate::i18n::tr(lang, "cmd.detectTimeout").to_string()),
-            }
-        }
-    })
-    .await
-}
-
-/// base_url 缺省回退飞书国内。
-fn effective_feishu_base(base_url: &str) -> String {
-    let b = base_url.trim().trim_end_matches('/');
-    if b.is_empty() {
-        "https://open.feishu.cn".to_string()
-    } else {
-        b.to_string()
-    }
-}
-
-/// 从 im.message.receive_v1 的 event 取 (发送者 open_id, 文本内容)。非文本消息返回 None。
-fn feishu_text_and_sender(event: &serde_json::Value) -> Option<(String, String)> {
-    let open_id = event
-        .get("sender")
-        .and_then(|s| s.get("sender_id"))
-        .and_then(|i| i.get("open_id"))
-        .and_then(|v| v.as_str())?
-        .to_string();
-    let message = event.get("message")?;
-    if message.get("message_type").and_then(|v| v.as_str()) != Some("text") {
-        return None;
-    }
-    let content_str = message
-        .get("content")
-        .and_then(|v| v.as_str())
-        .unwrap_or("{}");
-    let content: serde_json::Value = serde_json::from_str(content_str).ok()?;
-    let text = content.get("text").and_then(|v| v.as_str())?.to_string();
-    Some((open_id, text))
-}
-
 // ===== Slack 测试连接 / userId 自动识别 =====
 
 use crate::config::SlackChannelConfig;
@@ -3510,7 +3284,7 @@ pub async fn slack_detect_wait(args: SlackWaitArgs) -> Result<String, String> {
     }
 
     detect_with_cancel(lang, async move {
-        // Q6：经 Daemon 长连接识别（见钉钉/飞书同段说明）。app_key=App Token（Socket 复用键），
+        // Q6：经 Daemon 长连接识别。app_key=App Token（Socket 复用键），
         // app_secret=Bot Token（建连时校验齐全）。
         {
             let req = crate::ipc::DetectRequest {

@@ -182,9 +182,6 @@ fn integration(invoke: Invoke<Wry>) -> bool {
 #[inline(never)]
 fn channel(invoke: Invoke<Wry>) -> bool {
     let handler: fn(Invoke<Wry>) -> bool = tauri::generate_handler![
-        crate::commands::feishu_test,
-        crate::commands::feishu_detect_prepare,
-        crate::commands::feishu_detect_wait,
         crate::commands::detect_cancel,
         crate::commands::channel_health,
     ];
@@ -285,8 +282,7 @@ mod tests {
 
     #[test]
     fn routes_stack_heavy_commands_away_from_core() {
-        assert_eq!(group_for("feishu_detect_prepare"), Group::Channel);
-        assert_eq!(group_for("feishu_detect_wait"), Group::Channel);
+        assert_eq!(group_for("channel_health"), Group::Channel);
         assert_eq!(group_for("todos_projects_enriched"), Group::Todo);
         assert_eq!(group_for("new_task_projects_refreshed"), Group::Task);
         assert_eq!(group_for("agent_task_workspaces"), Group::Integration);

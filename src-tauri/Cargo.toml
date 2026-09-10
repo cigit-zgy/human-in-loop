@@ -66,9 +66,6 @@ tauri-plugin-liquid-glass = "0.1"
 dark-light = "2"
 tokio-tungstenite = { version = "0.29.0", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 futures-util = "0.3.32"
-# 飞书长连接帧为 protobuf(pbbp2)。仅用 prost 运行时 + #[derive(prost::Message)] 自定义 PbFrame，
-# 不引入 prost-build / protoc / build.rs（帧结构极小，自持更可控）。
-prost = "0.13"
 sys-locale = "0.3.2"
 # Markdown 解析（文本附件转 docx + macOS QuickLook 渲染预览）。禁用 simd 等默认特性以控体积，
 # 仅保留 `html`（QuickLook 预览把 .md 渲染成 HTML 走原生面板，见 macos_quicklook.rs）。
@@ -98,9 +95,8 @@ tokio = { version = "1", features = ["test-util"] }
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
-# Store channel secrets in the Windows Credential Manager.
+# Windows runtime dependencies.
 [target.'cfg(target_os = "windows")'.dependencies]
-keyring = { version = "3", default-features = false, features = ["windows-native"] }
 windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_Security",
@@ -117,17 +113,10 @@ windows-sys = { version = "0.61", features = [
   "Win32_UI_WindowsAndMessaging",
 ] }
 
-# Store channel secrets in the Linux Secret Service (D-Bus; needs gnome-keyring/kwallet).
-# Falls back to plaintext config when unavailable (headless servers).
-[target.'cfg(target_os = "linux")'.dependencies]
-keyring = { version = "3", default-features = false, features = ["sync-secret-service", "crypto-rust"] }
-
 # macOS 原生 QuickLook 预览（QLPreviewPanel）经 objc2 调用；版本与 Tauri 现用一致。
 # 需 NSResponder：预览控制者作为 NSResponder 子类插入弹窗响应链，方可经 QLPreviewPanelController
 # 协议（acceptsPreviewPanelControl/begin/end）控制面板，从而触发 previewPanel:handleEvent: 回调。
 [target.'cfg(target_os = "macos")'.dependencies]
-# Store channel secrets in the OS keychain (login keychain via Security.framework).
-keyring = { version = "3", default-features = false, features = ["apple-native"] }
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSString", "NSArray", "NSURL", "NSGeometry", "NSData", "NSError", "NSLocale", "NSDictionary"] }
 objc2-app-kit = { version = "0.3", features = ["NSResponder", "NSEvent", "NSApplication", "NSImage", "NSDockTile"] }

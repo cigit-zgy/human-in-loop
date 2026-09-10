@@ -1,6 +1,6 @@
 # human-in-loop
 
-A focused human-in-the-loop bridge for coding agents. The maintained remote delivery surfaces are **Feishu** and **Apple Messages via iMessage only**.
+A focused human-in-the-loop bridge for coding agents. The maintained remote delivery surface is **Apple Messages via iMessage only**.
 
 The project originated by adapting the open-source architecture of [`Naituw/AskHuman`](https://github.com/Naituw/AskHuman) and reuses [`openclaw/imsg`](https://github.com/openclaw/imsg) as an external macOS transport dependency. AskHuman is not a maintained runtime dependency or product identity. Carrier messaging is deliberately excluded: no SMS, MMS, RCS, paid messaging gateway, or automatic carrier fallback is permitted.
 
@@ -12,7 +12,7 @@ as compact metadata. iMessage defaults to 1,000 Unicode characters for detail
 and 1,500 for the complete confirmation; users may raise these limits up to
 the absolute 4,500/5,000-character safety ceilings. Oversized or invalid
 budgets fail closed without silent truncation and expose only fixed redacted
-reasons. Transport, Bot/TCC, no-SMS, Feishu, daemon, notification, and the
+reasons. Transport, Bot/TCC, no-SMS, daemon, notification, and the
 v0.1.1 canonical-HOME migration behavior remain unchanged. This release does
 not claim a notarized downloadable macOS installer or general binary
 distribution.
@@ -161,8 +161,8 @@ Codex / Agent
 human-in-loop Skill + MCP
     ↓
 canonical coordinator / notification dispatch
-    ├── Feishu
-    └── Apple Messages renderer
+    ↓
+Apple Messages renderer
              ↓
        Bot-user local worker
              ↓
@@ -177,7 +177,7 @@ canonical coordinator / notification dispatch
 
 ## Design invariants
 
-- Exactly two maintained remote channels: `feishu` and `imessage`.
+- Exactly one maintained remote channel: `imessage`.
 - Production iMessage sender and recipient use distinct Apple/iMessage account identities.
 - Apple Messages is **iMessage-only** and fails closed if actual iMessage delivery cannot be proven.
 - `ask_human` is a blocking correlated decision; `notify_human` is non-blocking informational delivery.

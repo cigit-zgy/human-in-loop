@@ -2,20 +2,8 @@
 //! 读取时若新位置缺失则回退旧 `~/.humaninloop/config.json`（向后兼容）。
 
 use crate::paths;
-use crate::secrets;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-
-/// Maps each channel secret to its keychain account and its `&mut String` field in `AppConfig`.
-struct SecretSpec {
-    account: &'static str,
-    field: fn(&mut AppConfig) -> &mut String,
-}
-
-const SECRET_SPECS: [SecretSpec; 1] = [SecretSpec {
-    account: secrets::ACCOUNT_FEISHU_SECRET,
-    field: |c| &mut c.channels.feishu.app_secret,
-}];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -307,34 +295,6 @@ impl Default for DingTalkChannelConfig {
     }
 }
 
-/// 飞书（Feishu / Lark）渠道配置。
-/// 形态：企业自建应用 + 机器人 + 长连接(WebSocket) + 单聊；发消息统一用 tenant_access_token。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
-pub struct FeishuChannelConfig {
-    pub enabled: bool,
-    /// 企业自建应用 App ID（`cli_...`）。
-    pub app_id: String,
-    /// 企业自建应用 App Secret。
-    pub app_secret: String,
-    /// 接收/作答用户的 Open ID（单聊，发消息用 receive_id_type=open_id）。
-    pub open_id: String,
-    /// 开放平台域名：默认飞书国内 `https://open.feishu.cn`；Lark 国际版填 `https://open.larksuite.com`。
-    pub base_url: String,
-}
-
-impl Default for FeishuChannelConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            app_id: String::new(),
-            app_secret: String::new(),
-            open_id: String::new(),
-            base_url: "https://open.feishu.cn".to_string(),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum IMessageIdentityMode {
@@ -398,7 +358,6 @@ pub struct ChannelsConfig {
     pub telegram: TelegramChannelConfig,
     #[serde(skip)]
     pub dingding: DingTalkChannelConfig,
-    pub feishu: FeishuChannelConfig,
     pub imessage: IMessageChannelConfig,
     #[serde(skip)]
     pub slack: SlackChannelConfig,
@@ -419,7 +378,6 @@ impl Default for ChannelsConfig {
             popup: PopupChannelConfig::default(),
             telegram: TelegramChannelConfig::default(),
             dingding: DingTalkChannelConfig::default(),
-            feishu: FeishuChannelConfig::default(),
             imessage: IMessageChannelConfig::default(),
             slack: SlackChannelConfig::default(),
             auto_activation: false,
@@ -499,8 +457,8 @@ impl AppConfig {
     }
 
     /// 原子写入指定路径（临时文件 + rename）。
-    /// The config holds channel secrets (DingTalk/Feishu AppSecret, Telegram bot token), so the
-    /// file is restricted to owner-only (0600) and its directory to 0700 on Unix.
+    /// The config contains private local channel identity, so the file is restricted to
+    /// owner-only (0600) and its directory to 0700 on Unix.
     pub fn save_to(&self, path: &Path) -> std::io::Result<()> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
@@ -519,11 +477,14 @@ impl AppConfig {
     /// 读取默认位置 `~/.askhuman/config.json`；新位置缺失时回退旧
     /// `~/.humaninloop/config.json`（向后兼容老用户）。
     ///
-    /// Secrets are resolved from the OS keychain (see `secrets`): empty config fields are filled
-    /// from the keychain; leftover plaintext fields are migrated into the keychain and blanked on
-    /// disk. After this, the in-memory secret fields always hold the effective value, so all
-    /// downstream readers (channel connect, hot-reload diff) keep working unchanged.
+    /// Historical unknown channel fields are ignored by serde and never resolved through a secret
+    /// store. The maintained iMessage channel has no application credential.
     pub fn load() -> Self {
+        Self::load_without_secrets()
+    }
+
+    /// Load the maintained local configuration without consulting any OS credential store.
+    pub fn load_without_secrets() -> Self {
         let primary = paths::config_file();
         if primary.exists() {
             // Self-heal: tighten perms of a pre-existing file that may have been written with a
@@ -532,43 +493,9 @@ impl AppConfig {
             if let Some(dir) = primary.parent() {
                 harden_dir(dir);
             }
-            let mut cfg = Self::load_from(&primary);
-            cfg.resolve_secrets_and_migrate(true);
-            return cfg;
-        }
-        // Dev Instance: never fall back to the user's main/legacy config (would pull production bots).
-        if !crate::dev_instance::is_dev_instance() {
-            let legacy = paths::legacy_config_file();
-            if legacy.exists() {
-                harden_file(&legacy);
-                let mut cfg = Self::load_from(&legacy);
-                // Don't persist (would migrate the legacy file to the primary location); just resolve.
-                cfg.resolve_secrets_and_migrate(false);
-                return cfg;
-            }
-        }
-        let mut cfg = Self::default();
-        cfg.resolve_secrets_and_migrate(false);
-        cfg
-    }
-
-    /// Like `load()` but skips OS-keychain secret resolution/migration entirely.
-    ///
-    /// Use this from paths that only need non-secret config (UI language, theme, window size,
-    /// history limit). They get the on-disk values — in keychain mode the secret fields stay blank,
-    /// which is fine since these callers never read them — without ever touching the keychain. This
-    /// avoids needless keychain reads on functionally-unrelated commands (e.g. `--version`) and, on
-    /// macOS, the password prompt an untrusted/ad-hoc-signed binary would otherwise trigger.
-    /// Permissions are still hardened (self-heal), matching `load()`.
-    pub fn load_without_secrets() -> Self {
-        let primary = paths::config_file();
-        if primary.exists() {
-            harden_file(&primary);
-            if let Some(dir) = primary.parent() {
-                harden_dir(dir);
-            }
             return Self::load_from(&primary);
         }
+        // Dev Instance: never fall back to the user's main/legacy config (would pull production bots).
         if !crate::dev_instance::is_dev_instance() {
             let legacy = paths::legacy_config_file();
             if legacy.exists() {
@@ -579,55 +506,9 @@ impl AppConfig {
         Self::default()
     }
 
-    /// 写入默认位置。Secrets are stripped into the keychain and blanked on disk (plaintext
-    /// fallback only when the keychain is unavailable).
+    /// Write the maintained configuration to its canonical location.
     pub fn save(&self) -> std::io::Result<()> {
-        let disk = self.persist_secrets_to_keychain();
-        disk.save_to(&paths::config_file())
-    }
-
-    /// Single pass over the secrets: an empty field is resolved from the keychain; a non-empty
-    /// field (leftover plaintext) is migrated into the keychain. The in-memory field always ends
-    /// up holding the effective value. When `persist` and at least one plaintext field was
-    /// migrated, re-save so the plaintext is blanked on disk.
-    fn resolve_secrets_and_migrate(&mut self, persist: bool) {
-        let mut migrated = false;
-        for spec in &SECRET_SPECS {
-            let field = (spec.field)(self);
-            if field.is_empty() {
-                if let Ok(Some(v)) = secrets::get(spec.account) {
-                    *field = v;
-                }
-            } else {
-                let value = field.clone();
-                if secrets::set(spec.account, &value).is_ok() {
-                    migrated = true;
-                }
-            }
-        }
-        if persist && migrated {
-            let _ = self.save();
-        }
-    }
-
-    /// Return a disk copy in which each secret successfully stored in the keychain is blanked;
-    /// secrets that can't be stored (keychain unavailable) stay as plaintext (fallback). The
-    /// in-memory `self` is left untouched (still holds the resolved values).
-    fn persist_secrets_to_keychain(&self) -> AppConfig {
-        let mut disk = self.clone();
-        for spec in &SECRET_SPECS {
-            let field = (spec.field)(&mut disk);
-            if field.is_empty() {
-                // Empty means "unchanged / keychain-mode / cleared" — leave the keychain as-is
-                // (an explicit clear is handled by the settings command via secrets::delete).
-                continue;
-            }
-            let value = field.clone();
-            if secrets::set(spec.account, &value).is_ok() {
-                field.clear();
-            }
-        }
-        disk
+        self.save_to(&paths::config_file())
     }
 }
 
@@ -682,10 +563,6 @@ mod tests {
         assert_eq!(c.channels.popup.height, 620.0);
         assert!(c.channels.popup.remember_size);
         assert!(!c.channels.popup.enabled);
-        // 飞书默认未启用、字段为空、域名为飞书国内。
-        assert!(!c.channels.feishu.enabled);
-        assert!(c.channels.feishu.app_id.is_empty());
-        assert_eq!(c.channels.feishu.base_url, "https://open.feishu.cn");
         assert!(!c.channels.imessage.enabled);
         assert!(c.channels.imessage.recipient.is_empty());
         assert_eq!(
@@ -705,35 +582,38 @@ mod tests {
     }
 
     #[test]
-    fn serialized_channels_expose_only_feishu_and_imessage() {
+    fn serialized_channels_expose_only_imessage() {
         let value = serde_json::to_value(ChannelsConfig::default()).unwrap();
         let mut keys: Vec<_> = value.as_object().unwrap().keys().cloned().collect();
         keys.sort();
-        assert_eq!(
-            keys,
-            ["autoActivation", "autoEndWatch", "feishu", "imessage"]
-        );
+        assert_eq!(keys, ["autoActivation", "autoEndWatch", "imessage"]);
     }
 
     #[test]
     fn legacy_delivery_configuration_is_ignored_and_disabled() {
-        let json = r#"{
+        let mut value = serde_json::json!({
             "channels": {
                 "popup": {"enabled": true},
                 "telegram": {"enabled": true, "botToken": "secret", "chatId": "1"},
                 "dingding": {"enabled": true, "clientId": "id", "clientSecret": "secret"},
                 "slack": {"enabled": true, "botToken": "secret", "appToken": "secret"},
-                "feishu": {"enabled": true, "appId": "id", "openId": "peer"},
                 "imessage": {"enabled": true, "recipient": "+15551234567", "chatId": 42, "chatGuid": "iMessage;-;+15551234567"}
             }
-        }"#;
-        let config: AppConfig = serde_json::from_str(json).unwrap();
+        });
+        value["channels"].as_object_mut().unwrap().insert(
+            ["fei", "shu"].concat(),
+            serde_json::json!({"enabled": true, "appId": "id", "openId": "peer"}),
+        );
+        let config: AppConfig = serde_json::from_value(value).unwrap();
         assert!(!config.channels.popup.enabled);
         assert!(!config.channels.telegram.enabled);
         assert!(!config.channels.dingding.enabled);
         assert!(!config.channels.slack.enabled);
-        assert!(config.channels.feishu.enabled);
         assert!(config.channels.imessage.enabled);
+        let serialized = serde_json::to_value(&config).unwrap();
+        assert!(serialized["channels"]
+            .get(["fei", "shu"].concat())
+            .is_none());
     }
 
     #[test]

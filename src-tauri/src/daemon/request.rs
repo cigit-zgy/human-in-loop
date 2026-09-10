@@ -59,29 +59,16 @@ impl AvailabilityReason {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ConfirmAvailability {
     popup: AvailabilityReason,
-    feishu: AvailabilityReason,
     imessage: AvailabilityReason,
 }
 
 impl ConfirmAvailability {
-    pub const fn new(
-        popup: AvailabilityReason,
-        feishu: AvailabilityReason,
-        imessage: AvailabilityReason,
-    ) -> Self {
-        Self {
-            popup,
-            feishu,
-            imessage,
-        }
+    pub const fn new(popup: AvailabilityReason, imessage: AvailabilityReason) -> Self {
+        Self { popup, imessage }
     }
 
     pub const fn popup(self) -> &'static str {
         self.popup.as_str()
-    }
-
-    pub const fn feishu(self) -> &'static str {
-        self.feishu.as_str()
     }
 
     pub const fn imessage(self) -> &'static str {
@@ -93,7 +80,6 @@ impl Default for ConfirmAvailability {
     fn default() -> Self {
         Self {
             popup: AvailabilityReason::Unavailable,
-            feishu: AvailabilityReason::Unavailable,
             imessage: AvailabilityReason::Unavailable,
         }
     }
@@ -102,7 +88,6 @@ impl Default for ConfirmAvailability {
 fn safe_failure_reason(channel_id: &str, reason: &str) -> AvailabilityReason {
     match channel_id {
         "popup" => AvailabilityReason::Unavailable,
-        "feishu" if reason == "Feishu router unavailable" => AvailabilityReason::Unavailable,
         "imessage" if reason == crate::channels::imessage::HealthState::NotConfigured.as_str() => {
             AvailabilityReason::NotConfigured
         }
@@ -300,7 +285,6 @@ impl ConfirmEntry {
         let mut availability = self.availability.lock().unwrap();
         match channel_id {
             "popup" => availability.popup = reason,
-            "feishu" => availability.feishu = reason,
             "imessage" => availability.imessage = reason,
             _ => {}
         }
@@ -1374,7 +1358,6 @@ mod tests {
         )
         .unwrap();
         entry.set_availability("popup", AvailabilityReason::Unavailable);
-        entry.set_availability("feishu", AvailabilityReason::Disabled);
         entry.set_availability("imessage", AvailabilityReason::Disabled);
 
         assert!(entry.fallback_no_available_channel());
@@ -1388,7 +1371,6 @@ mod tests {
             entry.availability_snapshot(),
             ConfirmAvailability::new(
                 AvailabilityReason::Unavailable,
-                AvailabilityReason::Disabled,
                 AvailabilityReason::Disabled,
             )
         );

@@ -1,4 +1,4 @@
-//! Channel detection flows started from Settings for DingTalk, Feishu, and Slack.
+//! Channel detection flows started from Settings for legacy interactive integrations.
 
 use super::*;
 
@@ -14,7 +14,6 @@ pub(super) async fn handle_detect(
     let work = async {
         match req.kind.as_str() {
             "dingtalk" => detect_dingtalk(state, req, lang).await,
-            "feishu" => detect_feishu(state, req, lang).await,
             "slack" => detect_slack(state, req, lang).await,
             other => Err(format!("unknown detect kind: {}", other)),
         }
@@ -58,24 +57,6 @@ pub(super) async fn send_detect_ack(req: &DetectRequest, id: &str, lang: Lang) {
                 Ok(client) => client
                     .send_oto_text(&detect_ack_text(field, lang))
                     .await
-                    .map_err(|e| e.to_string()),
-                Err(e) => Err(e.to_string()),
-            }
-        }
-        "feishu" => {
-            let field = crate::i18n::tr(lang, "autoChannel.detectFieldOpenId");
-            let cfg = crate::config::FeishuChannelConfig {
-                enabled: true,
-                app_id: req.app_key.trim().to_string(),
-                app_secret: req.app_secret.trim().to_string(),
-                open_id: id.to_string(),
-                base_url: req.base_url.trim().to_string(),
-            };
-            match crate::feishu::client::FeishuClient::new(&cfg) {
-                Ok(client) => client
-                    .send_text(&detect_ack_text(field, lang))
-                    .await
-                    .map(|_| ())
                     .map_err(|e| e.to_string()),
                 Err(e) => Err(e.to_string()),
             }
@@ -165,69 +146,6 @@ pub(super) async fn wait_dd_code(
                 if content == code {
                     if let Some(sender) = data.get("senderStaffId").and_then(|v| v.as_str()) {
                         return Ok(sender.to_string());
-                    }
-                }
-            }
-            Ok(None) => return Err(crate::i18n::tr(lang, "cmd.streamDisconnected").to_string()),
-            Err(_) => return Err(crate::i18n::tr(lang, "cmd.detectTimeout").to_string()),
-        }
-    }
-}
-
-/// 飞书识别：优先观察现有同 app_id 的活动连接（零冲突），否则临时开连。
-pub(super) async fn detect_feishu(
-    state: &Arc<ServerState>,
-    req: &DetectRequest,
-    lang: Lang,
-) -> Result<String, String> {
-    let code = req.code.trim().to_string();
-    if code.is_empty() {
-        return Err(crate::i18n::tr(lang, "cmd.detectCodeInvalid").to_string());
-    }
-    let existing = {
-        let guard = state.fs_router.lock().await;
-        match guard.as_ref() {
-            Some(r) if r.is_alive() && r.app_id() == req.app_key.trim() => {
-                Some(r.observe_message())
-            }
-            _ => None,
-        }
-    };
-    if let Some(mut rx) = existing {
-        return wait_fs_code(&mut rx, &code, lang).await;
-    }
-    let cfg = crate::config::FeishuChannelConfig {
-        enabled: true,
-        app_id: req.app_key.trim().to_string(),
-        app_secret: req.app_secret.trim().to_string(),
-        open_id: String::new(),
-        base_url: req.base_url.trim().to_string(),
-    };
-    let router = FsRouter::connect(&cfg).await?;
-    let mut rx = router.observe_message();
-    let out = wait_fs_code(&mut rx, &code, lang).await;
-    drop(rx);
-    drop(router);
-    out
-}
-
-/// 等飞书单聊文本内容等于识别码的消息，返回发送者 open_id；120s 超时。
-pub(super) async fn wait_fs_code(
-    rx: &mut tokio::sync::mpsc::UnboundedReceiver<serde_json::Value>,
-    code: &str,
-    lang: Lang,
-) -> Result<String, String> {
-    let deadline = Instant::now() + Duration::from_secs(120);
-    loop {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return Err(crate::i18n::tr(lang, "cmd.detectTimeout").to_string());
-        }
-        match tokio::time::timeout(remaining, rx.recv()).await {
-            Ok(Some(event)) => {
-                if let Some((open_id, text)) = fs_text_and_sender(&event) {
-                    if text.trim() == code {
-                        return Ok(open_id);
                     }
                 }
             }

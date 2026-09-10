@@ -8,8 +8,8 @@
 //! - Markdown：`markdown`（标准 Markdown → Slack mrkdwn）。
 //! - 路由：`router`（进程内独占一条 Socket Mode 连接，按 message_ts / user_id 分发到各会话）。
 //!
-//! 与飞书差异：帧是 JSON（非 protobuf），且 ack（回 envelope_id）与卡片更新（chat.update）解耦，
-//! 故 Router 收帧即 ack，无需飞书那样的「延迟回包」oneshot。
+//! 帧是 JSON（非 protobuf），且 ack（回 envelope_id）与卡片更新（chat.update）解耦，
+//! 故 Router 收帧即 ack，无需延迟回包 oneshot。
 
 pub mod blockkit;
 pub mod client;

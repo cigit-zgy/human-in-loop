@@ -1,4 +1,4 @@
-//! Plain unified-style diff for Feishu `.diff` attachments.
+//! Plain unified-style diff export.
 //!
 //! Tracked files retain the headers and lines produced by `git diff`. Untracked
 //! files get synthetic headers so the result reads like a normal Git patch.

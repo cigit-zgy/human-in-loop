@@ -4,7 +4,7 @@
 //! 这正是 TODO#1 在 Telegram 上的根因修复：旧实现每个会话各自 `getUpdates`、各持 offset，
 //! 并发/连续提问时互相吞更新。现在全进程只有 Router 的 Reader 任务在轮询。
 //!
-//! 与钉钉/飞书 Router 同构，但 Telegram 无「3 秒强制 ACK」：callback 由会话自行
+//! Telegram 无「3 秒强制 ACK」：callback 由会话自行
 //! `answerCallbackQuery`（仅为消除客户端转圈）；匹配不到的孤儿 callback 由 Reader 兜底应答。
 //!
 //! 单进程与 Daemon 复用：Daemon 持共享且常热的 Router；单进程每进程起一个仅挂 1 个会话的同款 Router。

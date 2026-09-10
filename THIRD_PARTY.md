@@ -8,7 +8,7 @@ This repository intentionally reuses and adapts established open-source componen
 - Pinned inspected baseline: `77e2e576347f94ef203bc2426b73a18749cb4e92` (`0.13.1` release line)
 - License: MIT
 - Disposition: **ADAPT**
-- Role: application/core basis, structured confirmation model, Feishu channel, Agent integration, coordinator, settings/history UI.
+- Role: application/core basis, structured confirmation model, Agent integration, coordinator, and settings/history UI.
 
 The application source was imported/adapted from this revision. Its upstream MIT notice is preserved at [`LICENSES/AskHuman-MIT.txt`](LICENSES/AskHuman-MIT.txt).
 

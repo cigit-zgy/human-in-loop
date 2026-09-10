@@ -755,7 +755,7 @@ mod tests {
                     Ok(ConfirmResult {
                         action_id: "received".into(),
                         comment: None,
-                        source_channel_id: "feishu".into(),
+                        source_channel_id: "imessage".into(),
                     })
                 })
             })
@@ -1455,7 +1455,7 @@ mod tests {
         assert_eq!(registry.active_count(), 0);
         assert!(!pending[1]
             .coordinator
-            .submit_wire(1, None, "feishu")
+            .submit_wire(1, None, "imessage")
             .unwrap());
 
         // EOF must reach every pending canonical request, not just the most recent one.
@@ -1488,7 +1488,7 @@ mod tests {
         let (entry, mut result) = registry.create_confirm(task, None).unwrap();
         assert_eq!(entry.request_id, "request-1");
         assert!(entry.coordinator.submit_wire(0, None, "imessage").unwrap());
-        assert!(!entry.coordinator.submit_wire(1, None, "feishu").unwrap());
+        assert!(!entry.coordinator.submit_wire(1, None, "imessage").unwrap());
         let crate::app::confirm_coordinator::ConfirmOutcome::Final(answer) =
             result.recv().await.unwrap()
         else {

@@ -1,5 +1,5 @@
 //! 会话型消息渠道的公共抽象：把「多问题逐条发送 / 单题特例 / 收集答案 / 投递」
-//! 这套与传输无关的编排逻辑抽出来，各渠道（Telegram / 钉钉 / 未来飞书等）只需实现
+//! 这套与传输无关的编排逻辑抽出来，legacy interactive 渠道只需实现
 //! `MessagingChannel` 的传输相关原语。
 
 use super::{ConversationOrigin, Preemption, ResultSink};
@@ -82,7 +82,7 @@ pub enum InboundReply {
 ///   避免作答期收到 `/status` 等命令时出现「引导 + 命令输出」两条重复回复。
 ///
 /// 引导带 `has_active_question=true`（会话进行中），并按当前自动激活开关裁剪命令/提示。
-/// `channel_id`：所在渠道（"telegram"/"dingding"/"feishu"/"slack"），决定引导是否列 watch
+/// `channel_id` selects the legacy interactive transport and command prefix.
 /// 命令（`watch::channel_supported`）及命令展示前缀（Slack `!`，其余 `/`）。
 pub fn answer_inbound_reply(
     kind: Option<crate::autochannel::AckKind>,

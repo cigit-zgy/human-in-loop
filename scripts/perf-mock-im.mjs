@@ -2,15 +2,15 @@
 // Local mock IM server for the deterministic popup-launch perf harness
 // (plan docs/plans/perf-harness-deterministic-mock-im.md).
 //
-// One process, one 127.0.0.1 port, serving BOTH the HTTP OpenAPIs and the WebSocket endpoints of
-// all four supported channels (DingTalk / Feishu / Telegram / Slack). It does the MINIMUM each
+// One process, one 127.0.0.1 port, serving the HTTP OpenAPIs and WebSocket endpoints needed by the
+// legacy local popup harness (DingTalk / Telegram / Slack). It does the MINIMUM each
 // channel's `Router::connect()` needs to succeed and stay alive, and accepts the outgoing
 // card/message sends so each channel's own send code (build card -> serialize -> HTTP) runs for real.
 //
 // Two deliberate ~150ms delays expose "IM blocks the popup" regressions:
 //   - connect/open responses  (dd gateway/connections/open, sl apps.connections.open,
-//     fs callback/ws/endpoint) -> these are awaited inside `connect()`, on today's popup path.
-//   - send responses          (dd createAndDeliver, sl chat.postMessage, fs im/v1/messages,
+//     supported endpoint) -> these are awaited inside `connect()`, on today's popup path.
+//   - send responses          (dd createAndDeliver, sl chat.postMessage,
 //     tg sendMessage)          -> today these run on a detached task (off the path); the delay is a
 //     future probe: if someone makes sending block the popup, it surfaces in the e2e number.
 //
@@ -23,7 +23,7 @@
 // Programmatic (used by perf-popup.mjs):
 //   import { startMockIm } from "./perf-mock-im.mjs";
 //   const mock = await startMockIm({ delayMs: 150 });
-//   // mock.port, mock.urls.{telegram,dingtalk,slack,feishu}, mock.close()
+//   // mock.port, mock.urls.{telegram,dingtalk,slack}, mock.close()
 
 import http from "node:http";
 import crypto from "node:crypto";
@@ -100,20 +100,6 @@ export function startMockIm(opts = {}) {
         return send({ result: true });
       }
 
-      // -- Feishu (success judged by code==0) --
-      if (pathname.startsWith("/fs-api/")) {
-        if (pathname.endsWith("/tenant_access_token/internal"))
-          return send({ code: 0, tenant_access_token: "mock-fs-token", expire: 7200 });
-        if (pathname.endsWith("/callback/ws/endpoint")) // connect probe
-          return send(
-            { code: 0, data: { URL: wsUrl("/fs-ws?service_id=1"), ClientConfig: { PingInterval: 120 } } },
-            { delay: delayMs },
-          );
-        if (pathname.endsWith("/im/v1/messages")) // send probe
-          return send({ code: 0, data: { message_id: "mock-msg" } }, { delay: delayMs });
-        return send({ code: 0, data: {} });
-      }
-
       // -- Slack (success judged by ok==true) --
       if (pathname.startsWith("/sl-api/")) {
         const method = pathname.split("/").pop();
@@ -154,7 +140,7 @@ export function startMockIm(opts = {}) {
         `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
     );
     sockets.add(socket);
-    socket.on("data", () => {}); // drain client frames (e.g. Feishu app-ping); never parsed
+    socket.on("data", () => {}); // drain client frames; never parsed
     socket.on("error", () => {});
     socket.on("close", () => sockets.delete(socket));
   });
@@ -170,7 +156,6 @@ export function startMockIm(opts = {}) {
           telegram: `${base}/tg`,
           dingtalk: `${base}/dd-api`,
           slack: `${base}/sl-api`,
-          feishu: `${base}/fs-api`,
         },
         close: () =>
           new Promise((done) => {

@@ -30,7 +30,6 @@ const ctx = createSettingsContext();
 const {
   config,
   activeTab,
-  secretsPresent,
   updateSummary,
   searchActive,
   searchQuery,
@@ -93,7 +92,6 @@ onBeforeUnmount(() => {
 onMounted(async () => {
   const payload = await getSettings();
   config.value = payload.config;
-  secretsPresent.value = payload.secretsPresent;
   applyTheme(payload.config.general.theme);
   applyLanguage(payload.config.general.language);
   unlistenSettings = await listen<{ theme?: ThemeMode; language?: UiLanguage }>(

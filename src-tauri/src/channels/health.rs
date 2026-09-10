@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
-/// 一条渠道故障记录（`channel` 为渠道 id："telegram" / "dingding" / "feishu" / "slack"）。
+/// A bounded, redacted channel failure record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChannelIssue {
     pub channel: String,

@@ -181,7 +181,7 @@ mod tests {
             .submit_wire(0, None, "popup")
             .expect("valid submission"));
         assert!(!coordinator
-            .submit_wire(1, None, "feishu")
+            .submit_wire(1, None, "imessage")
             .expect("late valid submission"));
         match rx.recv().await.unwrap() {
             ConfirmOutcome::Final(result) => {
@@ -263,7 +263,7 @@ mod tests {
         );
         assert!(coordinator.submit_wire(0, None, "popup").unwrap());
         // The loser never triggers the finalizer again.
-        assert!(!coordinator.submit_wire(0, None, "feishu").unwrap());
+        assert!(!coordinator.submit_wire(0, None, "imessage").unwrap());
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         match rx.recv().await.unwrap() {
             ConfirmOutcome::Final(result) => assert_eq!(result.action_id, "approve_once"),

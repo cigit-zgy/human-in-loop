@@ -151,12 +151,6 @@ pub fn configured_channel_ids(channels: &ChannelsConfig) -> Vec<&'static str> {
     {
         out.push("dingding");
     }
-    if channels.feishu.enabled
-        || !channels.feishu.app_id.is_empty()
-        || !channels.feishu.app_secret.is_empty()
-    {
-        out.push("feishu");
-    }
     if channels.slack.enabled
         || !channels.slack.bot_token.is_empty()
         || !channels.slack.app_token.is_empty()
@@ -183,9 +177,6 @@ pub fn extract_configured_channels(cfg: &AppConfig) -> Result<ChannelsConfig, St
     if ids.contains(&"dingding") {
         out.dingding = cfg.channels.dingding.clone();
     }
-    if ids.contains(&"feishu") {
-        out.feishu = cfg.channels.feishu.clone();
-    }
     if ids.contains(&"slack") {
         out.slack = cfg.channels.slack.clone();
     }
@@ -207,7 +198,6 @@ fn merge_channels(dst: &mut ChannelsConfig, src: &ChannelsConfig) {
         match id {
             "telegram" => dst.telegram = src.telegram.clone(),
             "dingding" => dst.dingding = src.dingding.clone(),
-            "feishu" => dst.feishu = src.feishu.clone(),
             "slack" => dst.slack = src.slack.clone(),
             _ => {}
         }
@@ -469,7 +459,7 @@ pub fn release_leases_for_worktree(worktree_root: &Path) -> Result<Vec<String>, 
 pub fn redact_channels(channels: &ChannelsConfig) -> serde_json::Value {
     let mut v = serde_json::to_value(channels).unwrap_or(serde_json::json!({}));
     if let Some(obj) = v.as_object_mut() {
-        for key in ["telegram", "dingding", "feishu", "slack"] {
+        for key in ["telegram", "dingding", "slack"] {
             if let Some(ch) = obj.get_mut(key).and_then(|x| x.as_object_mut()) {
                 for secret_key in ["botToken", "clientSecret", "appSecret", "appToken"] {
                     if let Some(val) = ch.get(secret_key).and_then(|x| x.as_str()) {
@@ -487,11 +477,9 @@ pub fn redact_channels(channels: &ChannelsConfig) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::FeishuChannelConfig;
-
     #[test]
     fn validate_name() {
-        assert!(validate_preset_name("feishu-test").is_ok());
+        assert!(validate_preset_name("channel-test").is_ok());
         assert!(validate_preset_name("").is_err());
         assert!(validate_preset_name("a/b").is_err());
     }
@@ -500,13 +488,9 @@ mod tests {
     fn configured_ids() {
         let mut ch = ChannelsConfig::default();
         assert!(configured_channel_ids(&ch).is_empty());
-        ch.feishu = FeishuChannelConfig {
-            enabled: true,
-            app_id: "cli_x".into(),
-            app_secret: "s".into(),
-            open_id: "ou".into(),
-            ..Default::default()
-        };
-        assert_eq!(configured_channel_ids(&ch), vec!["feishu"]);
+        ch.telegram.enabled = true;
+        ch.telegram.bot_token = "token".into();
+        ch.telegram.chat_id = "chat".into();
+        assert_eq!(configured_channel_ids(&ch), vec!["telegram"]);
     }
 }

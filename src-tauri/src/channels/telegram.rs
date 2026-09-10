@@ -259,7 +259,7 @@ async fn ask_question(
     let mut user_input = String::new();
 
     // Question title: when there's no source header, fall back to a fixed title (consistent with
-    // DingTalk/Feishu) and prefix it with the question icon `❓`, separating the question area from the
+    // other card transports) and prefix it with the question icon `❓`, separating the question area from the
     // body (Telegram messages are plain text with no card frame, so this prefix simulates a card title).
     let title = if header.trim().is_empty() {
         i18n::tr(lang, "channel.tgTitleFallback").to_string()

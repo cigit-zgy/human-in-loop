@@ -316,7 +316,6 @@ struct NoAvailableChannelLine {
     pid: u32,
     event: &'static str,
     popup: &'static str,
-    feishu: &'static str,
     imessage: &'static str,
 }
 
@@ -330,7 +329,6 @@ fn no_available_channel_line_at(
         pid,
         event: "no_available_channel",
         popup: availability.popup(),
-        feishu: availability.feishu(),
         imessage: availability.imessage(),
     })
     .ok()
@@ -589,7 +587,6 @@ mod tests {
         let line = no_available_channel_line_at(
             crate::daemon::request::ConfirmAvailability::new(
                 crate::daemon::request::AvailabilityReason::Unavailable,
-                crate::daemon::request::AvailabilityReason::Disabled,
                 crate::daemon::request::AvailabilityReason::AutomationDenied,
             ),
             123,
@@ -599,7 +596,6 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert_eq!(value["event"], "no_available_channel");
         assert_eq!(value["popup"], "unavailable");
-        assert_eq!(value["feishu"], "disabled");
         assert_eq!(value["imessage"], "automation_denied");
         for prohibited in [
             "recipient",
@@ -627,7 +623,6 @@ mod tests {
         let line = no_available_channel_line_at(
             crate::daemon::request::ConfirmAvailability::new(
                 crate::daemon::request::AvailabilityReason::Unavailable,
-                crate::daemon::request::AvailabilityReason::Disabled,
                 crate::daemon::request::AvailabilityReason::DetailTooLong,
             ),
             123,
@@ -637,6 +632,6 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert_eq!(value["imessage"], "detail_too_long");
         assert!(!line.contains("synthetic decision body marker"));
-        assert_eq!(value.as_object().unwrap().len(), 6);
+        assert_eq!(value.as_object().unwrap().len(), 5);
     }
 }

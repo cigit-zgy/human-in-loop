@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 const legacy = ["telegram", "slack", "dingding", "dingtalk"];
 
-test("settings and CLI expose only Feishu and iMessage", async () => {
+test("settings and CLI expose only iMessage", async () => {
   const [settings, search, channelCli, packageReadme, packageMetadata, en, zh] = await Promise.all([
     read("src/views/settings/ChannelsTab.vue"),
     read("src/views/settings/useSearch.ts"),
@@ -21,9 +21,10 @@ test("settings and CLI expose only Feishu and iMessage", async () => {
     }
   }
   assert.equal(settings.toLowerCase().includes("popup"), false);
-  assert.match(settings, /channels\.feishu/);
   assert.match(settings, /channels\.imessage/);
-  assert.match(channelCli, /\["feishu", "imessage"\]/);
+  assert.doesNotMatch(settings.toLowerCase(), /feishu/);
+  assert.match(channelCli, /\["imessage"\]/);
+  assert.doesNotMatch(channelCli.toLowerCase(), /feishu/);
   for (const locale of [en, zh]) {
     const start = locale.indexOf("    channels: {");
     const end = locale.indexOf("    history: {", start);
@@ -37,7 +38,7 @@ test("desktop command registry does not expose legacy channel operations", async
   const start = invoke.indexOf("fn channel(");
   const end = invoke.indexOf("fn history(", start);
   const registry = invoke.slice(start, end).toLowerCase();
-  assert.match(registry, /feishu_test/);
+  assert.doesNotMatch(registry, /feishu/);
   for (const name of legacy) assert.equal(registry.includes(name), false);
 });
 
@@ -46,9 +47,47 @@ test("confirmation registry selects only maintained channels", async () => {
   const start = runtime.indexOf("fn available_im_channels");
   const end = runtime.indexOf("fn select_im_delivery_candidates", start);
   const registry = runtime.slice(start, end).toLowerCase();
-  assert.match(registry, /feishu/);
   assert.match(registry, /imessage/);
   for (const name of legacy) assert.equal(registry.includes(name), false);
+});
+
+test("compiled and frontend source contain no Feishu product surface", async () => {
+  const roots = ["src-tauri/src", "src"];
+  const retiredTerms = ["feishu", "飞书", "lark"];
+  for (const root of roots) {
+    const entries = await readdir(new URL(`../${root}`, import.meta.url), {
+      recursive: true,
+      withFileTypes: true,
+    });
+    for (const entry of entries) {
+      if (!entry.isFile() || !/\.(rs|ts|vue)$/.test(entry.name)) continue;
+      const path = `${entry.parentPath}/${entry.name}`;
+      const source = await readFile(path, "utf8");
+      for (const term of retiredTerms) {
+        assert.equal(source.toLowerCase().includes(term), false, `retired channel leaked into ${path}`);
+      }
+    }
+  }
+});
+
+test("current documentation and fixtures do not retain the retired channel", async () => {
+  const paths = [
+    "README.md",
+    "THIRD_PARTY.md",
+    "docs/release-notes/v0.1.0.md",
+    "docs/release-notes/v0.1.1.md",
+    "docs/release-notes/v0.1.2.md",
+    "docs/release-notes/v0.1.3.md",
+    "scripts/mcp-verify.mjs",
+    "scripts/perf-markdown-message.mjs",
+    "scripts/perf-mock-im.mjs",
+    "scripts/perf-popup.mjs",
+  ];
+  const retired = ["fei", "shu"].join("");
+  for (const path of paths) {
+    const source = await read(path);
+    assert.equal(source.toLowerCase().includes(retired), false, `retired channel leaked into ${path}`);
+  }
 });
 
 test("iMessage send builder is explicit and fail-closed", async () => {

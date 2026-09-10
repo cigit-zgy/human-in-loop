@@ -86,20 +86,6 @@ pub(super) async fn send_msg_compose_card(
         lang,
     );
     let message_id = match channel_id {
-        "feishu" => {
-            let Ok(client) = crate::feishu::client::FeishuClient::new(&config.channels.feishu)
-            else {
-                return false;
-            };
-            let card = crate::feishu::card::build_msg_compose_card(&view, None);
-            match client.send_card(&card).await {
-                Ok(mid) => mid,
-                Err(err) => {
-                    log(&format!("msg compose: send feishu card failed: {}", err));
-                    return false;
-                }
-            }
-        }
         "dingding" => {
             let Ok(client) =
                 crate::dingtalk::client::DingTalkClient::new(&config.channels.dingding)
@@ -203,18 +189,13 @@ fn render_msg_compose_telegram(view: &crate::msg_card::MsgComposeView) -> String
     format!("<b>{}</b>\n\n{}", esc(&view.title), esc(&view.plain_body()))
 }
 
-/// 发一张单选卡到某渠道，返回消息 id（MVP 仅飞书；其它渠道 None → 调用方回文本兜底）。
+/// Send a single-select card to an interactive integration.
 pub(super) async fn send_select_card(
     channel_id: &str,
     config: &AppConfig,
     view: &crate::select::SelectView,
 ) -> Option<String> {
     match channel_id {
-        "feishu" => {
-            let client = crate::feishu::client::FeishuClient::new(&config.channels.feishu).ok()?;
-            let card = crate::feishu::card::build_select_card(view);
-            client.send_card(&card).await.ok()
-        }
         "dingding" => {
             // 钉钉：模板 + 变量。消息 id = 自铸 outTrackId（与 watch 卡同规，天然可编辑）。
             let client =
@@ -334,7 +315,7 @@ pub(super) async fn select_pick_task_flow(
     picker: &PickerEntry,
     config: &AppConfig,
     lang: Lang,
-    ack: Option<crate::confirm::transport::FsAck>,
+    ack: Option<crate::confirm::transport::CardAck>,
 ) {
     let title = match picker.kind {
         PickerKind::TaskWorkspace => crate::select::title_task_workspace(lang),
@@ -373,12 +354,8 @@ pub(super) async fn select_pick_task_flow(
         PickerKind::ForkPermission => "YOLO".into(),
         _ => selected_id.to_string(),
     };
-    if channel_id == "feishu" {
-        if let Some(ack) = ack {
-            let card = crate::feishu::card::build_select_final_card(&title, &label);
-            let _ = ack.send(Some(crate::feishu::card::callback_update_card(card)));
-        }
-    } else if channel_id == "dingding" {
+    let _ = ack;
+    if channel_id == "dingding" {
         dd_finalize_select_card(config, mid, &label).await;
     } else {
         finalize_select_card_edit(channel_id, config, mid, &title, &label).await;
@@ -523,16 +500,6 @@ pub(super) async fn finalize_all_select_cards(state: &Arc<ServerState>) {
             label.to_string()
         };
         match p.channel.as_str() {
-            "feishu" => {
-                let card = crate::feishu::card::build_select_final_card(&p.title, &picker_label);
-                if let Ok(client) =
-                    crate::feishu::client::FeishuClient::new(&config.channels.feishu)
-                {
-                    if let Err(err) = client.patch_card(&p.message_id, &card).await {
-                        log(&format!("select: expire feishu card failed: {}", err));
-                    }
-                }
-            }
             "dingding" => {
                 if matches!(p.kind, PickerKind::TodoManage | PickerKind::MsgCompose) {
                     // 管理卡走提问卡模板：置私有 `submitted=true` 关表单 + 公有终态文案。
@@ -619,13 +586,6 @@ pub(super) async fn finalize_expired_msg_compose_cards(state: &Arc<ServerState>)
     for picker in expired {
         let label = msg_compose_expired_label(&picker.channel, lang);
         let finalized = match picker.channel.as_str() {
-            "feishu" => match crate::feishu::client::FeishuClient::new(&config.channels.feishu) {
-                Ok(client) => {
-                    let card = crate::feishu::card::build_select_final_card(&picker.title, &label);
-                    client.patch_card(&picker.message_id, &card).await.is_ok()
-                }
-                Err(_) => false,
-            },
             "dingding" => {
                 match crate::dingtalk::client::DingTalkClient::new(&config.channels.dingding) {
                     Ok(client) => client
@@ -685,7 +645,7 @@ pub(super) async fn finalize_expired_msg_compose_cards(state: &Arc<ServerState>)
     state.select.route_refresh.notify_one();
 }
 
-/// 幂等确保各渠道的单选卡回调路由任务在位（撤掉已无 picker 的渠道路由）。飞书 / 钉钉 / TG / Slack。
+/// 幂等确保各 legacy interactive 渠道的单选卡回调路由任务在位。
 /// Confirm 卡 message_id 一并纳入（与 pickers 共享路由任务）。
 pub(super) async fn ensure_select_routes(state: &Arc<ServerState>) {
     let mut desired: HashMap<String, Vec<String>> = HashMap::new();
@@ -722,8 +682,8 @@ pub(super) async fn ensure_select_routes(state: &Arc<ServerState>) {
     }
 }
 
-/// 幂等确保单一渠道的单选卡回调路由任务在位（飞书 / 钉钉 / TG / Slack；复用 watch 的路由句柄类型）。
-/// 飞书走「回调同步回卡」(oneshot Option)；钉钉先空 ACK、卡片变化经 OpenAPI；TG/Slack 就地编辑
+/// 幂等确保单一渠道的单选卡回调路由任务在位，复用 watch 的路由句柄类型。
+/// 钉钉先空 ACK、卡片变化经 OpenAPI；TG/Slack 就地编辑
 /// （见 `handle_select_dd_action` / `handle_select_tg_action` / `handle_select_slack_action`）。
 pub(super) async fn ensure_select_route_for(
     state: &Arc<ServerState>,
@@ -747,15 +707,6 @@ pub(super) async fn ensure_select_route_for(
         .collect();
     // 取该渠道的共享 Router（渠道不可用则跳过；picker 仍在，渠道恢复后下一拍补挂）。
     let router: WatchChannelRouter = match channel_id {
-        "feishu" => {
-            if !crate::app::is_feishu_active(config) {
-                return;
-            }
-            match ensure_fs_router(state, &config.channels.feishu).await {
-                Some(r) => WatchChannelRouter::Feishu(r),
-                None => return,
-            }
-        }
         "dingding" => {
             if !crate::app::is_dingding_active(config) {
                 return;
@@ -799,27 +750,6 @@ pub(super) async fn ensure_select_route_for(
     let stop2 = stop.clone();
     let st = state.clone();
     let router_ref: WatchRouterRef = match &router {
-        WatchChannelRouter::Feishu(r) => {
-            let mut routed = r.register();
-            for mid in &mids {
-                routed.set_active(Some(mid), "");
-            }
-            tokio::spawn(async move {
-                loop {
-                    tokio::select! {
-                        _ = stop2.notified() => break,
-                        ev = routed.recv() => match ev {
-                            Some(crate::feishu::router::FsInbound::Card { data, ack }) => {
-                                handle_select_card_action(&st, "feishu", &data, ack).await;
-                            }
-                            Some(_) => {} // 未认领聊天消息，不会到达；防御性忽略。
-                            None => break, // Router 断开：下一拍 ensure 重建。
-                        },
-                    }
-                }
-            });
-            WatchRouterRef::Feishu(Arc::downgrade(r))
-        }
         WatchChannelRouter::DingTalk(r) => {
             let mut routed = r.register();
             for mid in &mids {
@@ -927,298 +857,14 @@ pub(super) async fn ensure_select_route_for(
     }
 }
 
-/// 处理飞书单选卡 / 确认卡点击。
-/// 过期 / 越界 / 无台账 → 空 ACK（静默，D7）。
-pub(super) async fn handle_select_card_action(
-    state: &Arc<ServerState>,
-    channel_id: &str,
-    data: &serde_json::Value,
-    ack: crate::feishu::router::CardAck,
-) {
-    // Stage 双按钮确认卡。
-    if let Some((mid, slot)) = crate::feishu::card::parse_confirm_action(data) {
-        handle_confirm_action(state, channel_id, &mid, slot, Some(ack)).await;
-        return;
-    }
-    if let Some(submit) = crate::feishu::card::parse_card_submit(data, &[]) {
-        let is_msg_compose = state.select.pickers.lock().unwrap().iter().any(|picker| {
-            picker.channel == channel_id
-                && picker.message_id == submit.message_id
-                && picker.kind == PickerKind::MsgCompose
-        });
-        if is_msg_compose {
-            handle_fs_msg_compose_submit(state, channel_id, submit, ack).await;
-            return;
-        }
-    }
-    let Some((mid, idx)) = crate::feishu::card::parse_select_action(data) else {
-        // 非单选点击：可能是普通 / 自动待办卡的表单提交；否则空 ACK。
-        fs_todo_manage_submit(state, data, ack).await;
-        return;
-    };
-    let picker = {
-        let pickers = state.select.pickers.lock().unwrap();
-        pickers
-            .iter()
-            .find(|p| p.channel == channel_id && p.message_id == mid)
-            .cloned()
-    };
-    let Some(picker) = picker else {
-        let _ = ack.send(None); // 已过期 / 被清理：静默（D7）。
-        return;
-    };
-    let Some(session_id) = picker.options.get(idx).cloned() else {
-        let _ = ack.send(None);
-        return;
-    };
-    let lang = Lang::current();
-    let config = state.config_snapshot();
-    if session_id == crate::select::MORE_OPTION_ID
-        && matches!(
-            picker.kind,
-            PickerKind::Todo | PickerKind::TodoRm | PickerKind::TodoAuto
-        )
-    {
-        select_pick_todo_more(state, channel_id, &mid, &picker, &config, lang, Some(ack)).await;
-        activate_channel_on_action(state, channel_id, &config, lang).await;
-        return;
-    }
-    match picker.kind {
-        PickerKind::TaskWorkspace
-        | PickerKind::TaskAgent
-        | PickerKind::TaskPermission
-        | PickerKind::TaskInputSource
-        | PickerKind::ForkSource
-        | PickerKind::ForkPermission => {
-            select_pick_task_flow(
-                state,
-                channel_id,
-                &mid,
-                &session_id,
-                &picker,
-                &config,
-                lang,
-                Some(ack),
-            )
-            .await;
-        }
-        PickerKind::Watch => {
-            // 先完成就地变身（含卡片 ACK），再激活——避免激活的补推/回执拖慢同步 ACK。
-            select_pick_watch(state, channel_id, &mid, &session_id, &config, lang, ack).await;
-            // 卡片点『关注』＝在该渠道操作 → 设为活跃槽（与 /watch 一致，用户决策）。
-            activate_channel_on_action(state, channel_id, &config, lang).await;
-        }
-        PickerKind::Status => {
-            // 单选卡不动：先空 ACK，再回纯文本详情（可继续点其它 agent）。
-            let _ = ack.send(None);
-            let snapshot = state.agents.snapshot();
-            let text = status_detail_by_session(&snapshot, &session_id, channel_id, lang);
-            let _ = reply_channel_text(channel_id, &config, &text).await;
-            // 卡片点『查看』＝在该渠道操作 → 设为活跃槽（补齐与 /status 文本命令的一致性）。
-            activate_channel_on_action(state, channel_id, &config, lang).await;
-        }
-        PickerKind::Unwatch => {
-            select_pick_unwatch(state, channel_id, &mid, &session_id, &config, lang, ack).await;
-        }
-        PickerKind::Msg => {
-            if let Some(content) = picker.payload.as_deref() {
-                select_pick_msg(state, channel_id, &mid, &session_id, content, lang, ack).await;
-            } else {
-                fs_select_pick_msg_compose(
-                    state,
-                    channel_id,
-                    &mid,
-                    &session_id,
-                    &config,
-                    lang,
-                    ack,
-                )
-                .await;
-            }
-            // 卡片点『发送』＝在该渠道操作 → 设为活跃槽（与 /msg 一致，用户决策）。
-            activate_channel_on_action(state, channel_id, &config, lang).await;
-        }
-        PickerKind::MsgCompose => {
-            let _ = ack.send(None);
-        }
-        PickerKind::Diff | PickerKind::Stage | PickerKind::Transcript => {
-            select_pick_export(
-                state,
-                channel_id,
-                &mid,
-                &session_id,
-                picker.kind,
-                &config,
-                lang,
-                Some(ack),
-            )
-            .await;
-            activate_channel_on_action(state, channel_id, &config, lang).await;
-        }
-        // /todo · /todo-rm（spec todo-whats-next D8）。
-        PickerKind::Todo => {
-            fs_select_pick_todo(
-                state,
-                &mid,
-                &session_id,
-                picker.payload.as_deref(),
-                lang,
-                ack,
-            )
-            .await;
-            activate_channel_on_action(state, channel_id, &config, lang).await;
-        }
-        PickerKind::TodoRm => {
-            fs_select_pick_todo_rm(state, &mid, &session_id, lang, ack).await;
-            activate_channel_on_action(state, channel_id, &config, lang).await;
-        }
-        PickerKind::TodoRmEntry => {
-            fs_select_pick_todo_rm_entry(state, &mid, &session_id, &picker, lang, ack).await;
-        }
-        PickerKind::TodoAuto => {
-            fs_select_pick_todo_auto(
-                state,
-                &mid,
-                &session_id,
-                picker.payload.as_deref(),
-                lang,
-                ack,
-            )
-            .await;
-            activate_channel_on_action(state, channel_id, &config, lang).await;
-        }
-        PickerKind::TodoAutoEntry => {
-            fs_select_pick_todo_auto_entry(state, &mid, &session_id, &picker, lang, ack).await;
-        }
-        // 管理卡无行按钮（options 恒空，上方取选项即已短路）；防御性空 ACK。
-        PickerKind::TodoManage => {
-            let _ = ack.send(None);
-        }
-        PickerKind::Yolo => {
-            select_pick_yolo(
-                state,
-                channel_id,
-                &mid,
-                &session_id,
-                &config,
-                lang,
-                Some(ack),
-            )
-            .await;
-            activate_channel_on_action(state, channel_id, &config, lang).await;
-        }
-    }
-}
-
-async fn handle_fs_msg_compose_submit(
-    state: &Arc<ServerState>,
-    channel_id: &str,
-    submit: crate::feishu::card::CardSubmit,
-    ack: crate::feishu::router::CardAck,
-) {
-    let picker = state
-        .select
-        .pickers
-        .lock()
-        .unwrap()
-        .iter()
-        .find(|picker| {
-            picker.channel == channel_id
-                && picker.message_id == submit.message_id
-                && picker.kind == PickerKind::MsgCompose
-        })
-        .cloned();
-    let Some(picker) = picker else {
-        let _ = ack.send(None);
-        return;
-    };
-    let Some(payload) = crate::msg_card::decode_payload(picker.payload.as_deref()) else {
-        let _ = ack.send(None);
-        return;
-    };
-    let lang = Lang::current();
-    let config = state.config_snapshot();
-    if payload.recovered || now_secs() >= payload.expires_at {
-        let label = msg_compose_expired_label(channel_id, lang);
-        let card = crate::feishu::card::build_select_final_card(&picker.title, &label);
-        let _ = ack.send(Some(crate::feishu::card::callback_update_card(card)));
-        remove_picker(state, channel_id, &submit.message_id);
-        return;
-    }
-    let snapshot = state.agents.snapshot();
-    let Some(rec) = find_agent_by_session(&snapshot, &payload.session_id) else {
-        let card = crate::feishu::card::build_select_final_card(
-            &picker.title,
-            crate::i18n::tr(lang, "select.msgTargetGone"),
-        );
-        let _ = ack.send(Some(crate::feishu::card::callback_update_card(card)));
-        remove_picker(state, channel_id, &submit.message_id);
-        return;
-    };
-    if !is_working_non_grok(&snapshot, &payload.session_id) {
-        let card = crate::feishu::card::build_select_final_card(
-            &picker.title,
-            crate::i18n::tr(lang, "select.msgTargetGone"),
-        );
-        let _ = ack.send(Some(crate::feishu::card::callback_update_card(card)));
-        remove_picker(state, channel_id, &submit.message_id);
-        return;
-    }
-    let content = match crate::msg_card::validate_input(submit.user_input.as_deref(), lang) {
-        Ok(content) => content,
-        Err(error) => {
-            let view = crate::msg_card::build_view(
-                rec,
-                state.interject.pending_count(&payload.session_id),
-                &state.interject.full_text(&payload.session_id),
-                Some(error),
-                lang,
-            );
-            let card =
-                crate::feishu::card::build_msg_compose_card(&view, submit.user_input.as_deref());
-            let _ = ack.send(Some(crate::feishu::card::callback_update_card(card)));
-            return;
-        }
-    };
-    if take_msg_compose_picker(state, channel_id, &submit.message_id).is_none() {
-        let _ = ack.send(None);
-        return;
-    }
-    let snapshot = state.agents.snapshot();
-    let rec = find_agent_by_session(&snapshot, &payload.session_id);
-    let label = msg_pick_deliver(state, channel_id, &payload.session_id, rec, &content, lang);
-    let card = crate::feishu::card::build_select_final_card(&picker.title, &label);
-    let _ = ack.send(Some(crate::feishu::card::callback_update_card(card)));
-    state.select.route_refresh.notify_one();
-    activate_channel_on_action(state, channel_id, &config, lang).await;
-}
-
 fn msg_compose_expired_label(channel_id: &str, lang: Lang) -> String {
     crate::i18n::tr(lang, "msgCard.expired")
         .replace("{p}", crate::autochannel::cmd_prefix(channel_id))
 }
 
-/// 单选卡点选「发送」（飞书就地定格）：校验目标工作中·非 grok → 投递 + 定格「已发送给 [编号]」；
+/// 单选卡点选「发送」：校验目标工作中·非 grok → 投递 + 定格「已发送给 [编号]」；
 /// 目标已漂移（不在工作中 / 已结束 / 消失）→ 定格「已不在工作中，未发送」。定格文案随卡回（ack）。
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn select_pick_msg(
-    state: &Arc<ServerState>,
-    channel_id: &str,
-    mid: &str,
-    session_id: &str,
-    content: &str,
-    lang: Lang,
-    ack: crate::feishu::router::CardAck,
-) {
-    let snapshot = state.agents.snapshot();
-    let rec = find_agent_by_session(&snapshot, session_id);
-    let label = msg_pick_deliver(state, channel_id, session_id, rec, content, lang);
-    let card =
-        crate::feishu::card::build_select_final_card(&crate::select::title_msg(lang), &label);
-    let _ = ack.send(Some(crate::feishu::card::callback_update_card(card)));
-    remove_picker(state, channel_id, mid);
-}
-
 fn morph_picker_to_msg_compose(
     state: &Arc<ServerState>,
     channel_id: &str,
@@ -1252,48 +898,6 @@ fn morph_picker_to_msg_compose(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn fs_select_pick_msg_compose(
-    state: &Arc<ServerState>,
-    channel_id: &str,
-    mid: &str,
-    session_id: &str,
-    _config: &AppConfig,
-    lang: Lang,
-    ack: crate::feishu::router::CardAck,
-) {
-    let snapshot = state.agents.snapshot();
-    let Some(rec) = find_agent_by_session(&snapshot, session_id) else {
-        let card = crate::feishu::card::build_select_final_card(
-            &crate::select::title_msg(lang),
-            crate::i18n::tr(lang, "select.msgTargetGone"),
-        );
-        let _ = ack.send(Some(crate::feishu::card::callback_update_card(card)));
-        remove_picker(state, channel_id, mid);
-        return;
-    };
-    if !is_working_non_grok(&snapshot, session_id) {
-        let card = crate::feishu::card::build_select_final_card(
-            &crate::select::title_msg(lang),
-            crate::i18n::tr(lang, "select.msgTargetGone"),
-        );
-        let _ = ack.send(Some(crate::feishu::card::callback_update_card(card)));
-        remove_picker(state, channel_id, mid);
-        return;
-    }
-    let view = crate::msg_card::build_view(
-        rec,
-        state.interject.pending_count(session_id),
-        &state.interject.full_text(session_id),
-        None,
-        lang,
-    );
-    let card = crate::feishu::card::build_msg_compose_card(&view, None);
-    let _ = ack.send(Some(crate::feishu::card::callback_update_card(card)));
-    morph_picker_to_msg_compose(state, channel_id, mid, session_id, view.title);
-}
-
-/// 单选卡「发送」的共享收尾：目标仍工作中·非 grok → 投递并返回「已发送给 [编号] · 回执」定格文案；
-/// 否则返回「已不在工作中，未发送」。渲染层各渠道自行把该文案落进定格卡。
 pub(super) fn msg_pick_deliver(
     state: &Arc<ServerState>,
     channel_id: &str,
@@ -1327,187 +931,6 @@ pub(super) fn msg_pick_deliver(
 
 /// 单选卡点选「watch」：就地把这张卡编辑成实时 watch 卡（经 oneshot 同步回卡）。
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn select_pick_watch(
-    state: &Arc<ServerState>,
-    channel_id: &str,
-    mid: &str,
-    session_id: &str,
-    config: &AppConfig,
-    lang: Lang,
-    ack: crate::feishu::router::CardAck,
-) {
-    let now = now_secs();
-    let snapshot = state.agents.snapshot();
-    let rec = find_agent_by_session(&snapshot, session_id);
-    let waiting = state
-        .registry
-        .in_flight_agent_session_ids()
-        .contains(&session_id.to_string());
-    let seq = rec
-        .and_then(|r| r.get("seq").and_then(|v| v.as_u64()))
-        .unwrap_or(0);
-    let frame = crate::watch::build_frame(seq, rec, waiting);
-    let ended = frame.phase == crate::watch::WatchPhase::Ended;
-    if ended {
-        // 已结束/消失：就地定格终态卡、不订阅、消费掉 picker。
-        let card = crate::feishu::card::build_watch_card(&crate::watch::card_view(
-            &frame,
-            crate::watch::CardMode::Final(crate::watch::FinalKind::Ended),
-            now,
-            lang,
-            None,
-        ));
-        let _ = ack.send(Some(crate::feishu::card::callback_update_card(card)));
-        remove_picker(state, channel_id, mid);
-        // 不在此重挂 select 路由（避免 recv-loop 递归 → 非 Send）：残留的 mid 认领无害（卡已定格无按钮），
-        // 下次 send_agent_picker / 监听重建时统一收敛。
-        return;
-    }
-    // 上限校验（本渠道；已在关注同一 session＝换新卡，不计新增）。
-    let already = state
-        .watch
-        .subs
-        .lock()
-        .unwrap()
-        .iter()
-        .any(|s| s.channel == channel_id && s.session_id == session_id);
-    if !already {
-        let count = state
-            .watch
-            .subs
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|s| s.channel == channel_id && !s.rewatchable)
-            .count();
-        if count >= crate::watch::MAX_WATCHES {
-            let _ = ack.send(None);
-            let text = crate::i18n::tr(lang, "watch.limit")
-                .replace("{n}", &crate::watch::MAX_WATCHES.to_string())
-                .replace("{p}", crate::autochannel::cmd_prefix(channel_id));
-            let _ = reply_channel_text(channel_id, config, &text).await;
-            return;
-        }
-    }
-    // 就地回一张实时 watch 卡（这条单选卡消息随即变成 watch 卡）。
-    let card = crate::feishu::card::build_watch_card(&crate::watch::card_view(
-        &frame,
-        crate::watch::CardMode::Active,
-        now,
-        lang,
-        None,
-    ));
-    let _ = ack.send(Some(crate::feishu::card::callback_update_card(card)));
-    // 登记订阅（含换新卡收尾）+ 消费 picker + 让 watch 立即认领本消息（`ensure_watch_routes` 不会递归
-    // 回 select）。select 侧不在此重挂（避免 recv-loop 递归 → 非 Send）：本 mid 已被 watch 认领覆盖，
-    // 残留的 select 认领无害，下次 send_agent_picker / 监听重建时收敛。
-    register_watch_at(
-        state, channel_id, session_id, seq, mid, &frame, false, config, lang,
-    )
-    .await;
-    remove_picker(state, channel_id, mid);
-    ensure_watch_routes(state).await;
-}
-
-/// 单选卡点选「unwatch」：取消该关注（旧卡定格）+ 回文本确认 + 就地刷新单选卡（移除该项）。
-#[allow(clippy::too_many_arguments)]
-pub(super) async fn select_pick_unwatch(
-    state: &Arc<ServerState>,
-    channel_id: &str,
-    mid: &str,
-    session_id: &str,
-    config: &AppConfig,
-    lang: Lang,
-    ack: crate::feishu::router::CardAck,
-) {
-    let now = now_secs();
-    // 找到该 session 在本渠道的订阅（可能已被别处取消/结束 → 视为已不在关注，只刷新卡）。
-    let entry = state
-        .watch
-        .subs
-        .lock()
-        .unwrap()
-        .iter()
-        .find(|s| s.channel == channel_id && s.session_id == session_id)
-        .cloned();
-    if let Some(entry) = entry {
-        // 旧 watch 卡定格「已取消关注」（可重新关注）。
-        if let Some(client) = watch_client(state, channel_id, config).await {
-            let snapshot = state.agents.snapshot();
-            let waiting = state
-                .registry
-                .in_flight_agent_session_ids()
-                .contains(&entry.session_id);
-            let frame = crate::watch::build_frame(
-                entry.seq,
-                find_agent_by_session(&snapshot, &entry.session_id),
-                waiting,
-            );
-            if let Err(err) = client
-                .edit(
-                    &entry.message_id,
-                    &frame,
-                    crate::watch::CardMode::Final(crate::watch::FinalKind::Cancelled),
-                    now,
-                    lang,
-                    Some(&entry.session_id),
-                )
-                .await
-            {
-                log(&format!("select: finalize unwatch card failed: {}", err));
-            }
-        }
-        {
-            let mut subs = state.watch.subs.lock().unwrap();
-            if let Some(s) = subs.iter_mut().find(|s| s.message_id == entry.message_id) {
-                s.rewatchable = true;
-            }
-        }
-        persist_watch_subs(state);
-        state.watch.notify.notify_one();
-        ensure_watch_routes(state).await;
-        let text =
-            crate::i18n::tr(lang, "watch.unwatchDone").replace("{id}", &entry.seq.to_string());
-        let _ = reply_channel_text(channel_id, config, &text).await;
-    }
-    // 就地刷新单选卡：剩余订阅 → 新卡；空 → 定格「已全部取消关注」并消费 picker。
-    let snapshot = state.agents.snapshot();
-    let options = unwatch_options(state, channel_id, &snapshot, lang);
-    if options.is_empty() {
-        let card = crate::feishu::card::build_select_final_card(
-            &crate::select::title_unwatch(lang),
-            crate::i18n::tr(lang, "select.unwatchAllDoneCard"),
-        );
-        let _ = ack.send(Some(crate::feishu::card::callback_update_card(card)));
-        remove_picker(state, channel_id, mid);
-        // 不在此重挂 select 路由（同 select_pick_watch 理由）：卡已定格无按钮，残留认领无害。
-    } else {
-        let view = crate::select::build_view(
-            crate::select::title_unwatch(lang),
-            options,
-            crate::select::SelectAction::Unwatch,
-            lang,
-        );
-        let new_ids: Vec<String> = view.options.iter().map(|o| o.id.clone()).collect();
-        let card = crate::feishu::card::build_select_card(&view);
-        let _ = ack.send(Some(crate::feishu::card::callback_update_card(card)));
-        // 更新 picker 的选项快照（下标对齐新卡）。
-        if let Some(p) = state
-            .select
-            .pickers
-            .lock()
-            .unwrap()
-            .iter_mut()
-            .find(|p| p.channel == channel_id && p.message_id == mid)
-        {
-            p.options = new_ids;
-        }
-    }
-}
-
-// ===== /yolo（spec codex-permission-remember D53）=====
-
-/// `/yolo` 选择卡的会话显示名：对话标题 → 项目名 → 缩短的 session id（与管理面板同口径）。
 pub(super) fn yolo_session_label(state: &Arc<ServerState>, session_id: &str) -> String {
     if let Some((title, project)) = state.agents.session_display(session_id) {
         if !title.is_empty() {
@@ -1547,7 +970,7 @@ pub(super) fn yolo_options(
 }
 
 /// 单选卡点选「关闭」（/yolo）：只删该会话的 Yolo 规则 → 本卡定格终态文案。三路复用：
-/// 飞书经 ack 同步回卡，钉钉走 OpenAPI 终态，TG/Slack 就地编辑。规则已不在（别处关了 /
+/// 钉钉走 OpenAPI 终态，TG/Slack 就地编辑。规则已不在（别处关了 /
 /// 过期）→ 定格「已不在开启状态」。
 pub(super) async fn select_pick_yolo(
     state: &Arc<ServerState>,
@@ -1556,7 +979,7 @@ pub(super) async fn select_pick_yolo(
     session_id: &str,
     config: &AppConfig,
     lang: Lang,
-    ack: Option<crate::confirm::transport::FsAck>,
+    ack: Option<crate::confirm::transport::CardAck>,
 ) {
     let sid = session_id.to_string();
     let removed = tokio::task::spawn_blocking(move || crate::permission_rules::disable_yolo(&sid))
@@ -1572,12 +995,8 @@ pub(super) async fn select_pick_yolo(
         crate::i18n::tr(lang, "select.yoloOffGone").to_string()
     };
     let title = crate::select::title_yolo(lang);
-    if channel_id == "feishu" {
-        if let Some(ack) = ack {
-            let card = crate::feishu::card::build_select_final_card(&title, &label);
-            let _ = ack.send(Some(crate::feishu::card::callback_update_card(card)));
-        }
-    } else if channel_id == "dingding" {
+    let _ = ack;
+    if channel_id == "dingding" {
         dd_finalize_select_card(config, mid, &label).await;
     } else {
         finalize_select_card_edit(channel_id, config, mid, &title, &label).await;
@@ -2940,7 +2359,7 @@ pub(super) async fn select_pick_export(
     kind: PickerKind,
     config: &AppConfig,
     lang: Lang,
-    ack: Option<crate::feishu::router::CardAck>,
+    ack: Option<crate::confirm::transport::CardAck>,
 ) {
     let snapshot = state.agents.snapshot();
     let seq = find_agent_by_session(&snapshot, session_id)
@@ -2959,12 +2378,8 @@ pub(super) async fn select_pick_export(
         _ => String::new(),
     };
     let label = crate::i18n::tr(lang, label_key).replace("{id}", &seq.to_string());
-    if channel_id == "feishu" {
-        if let Some(ack) = ack {
-            let card = crate::feishu::card::build_select_final_card(&title, &label);
-            let _ = ack.send(Some(crate::feishu::card::callback_update_card(card)));
-        }
-    } else if channel_id == "dingding" {
+    let _ = ack;
+    if channel_id == "dingding" {
         dd_finalize_select_card(config, mid, &label).await;
     } else {
         finalize_select_card_edit(channel_id, config, mid, &title, &label).await;

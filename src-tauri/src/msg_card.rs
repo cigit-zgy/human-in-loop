@@ -236,7 +236,7 @@ mod tests {
     #[test]
     fn recovery_round_trip_contains_no_message_content() {
         let item = MsgComposeRecovery {
-            channel: "feishu".into(),
+            channel: "telegram".into(),
             message_id: "om_1".into(),
             session_id: "session-1".into(),
             expires_at: 42,

@@ -4,7 +4,7 @@
 //! accessory。Slack 要求 `action_id` 在整条消息内唯一，故用 `select_<idx>`（idx=选项下标）；daemon 侧
 //! 按下标映射回 session_id（避 seq 漂移）。
 //!
-//! 点选后（daemon 侧）：`/watch` 就地把本消息 `chat.update` 成实时 watch 卡（与飞书就地变身一致）；
+//! 点选后（daemon 侧）：`/watch` 就地把本消息 `chat.update` 成实时 watch 卡；
 //! `/status` 回文本详情、卡不动；`/unwatch` 旧卡定格 + 就地刷新本卡（移除该项 / 取 0 定格）。
 
 use crate::i18n::Lang;
@@ -23,7 +23,7 @@ fn dot_emoji(dot: Option<SelectDot>) -> &'static str {
     }
 }
 
-/// 按钮样式（watch=primary、status=默认、unwatch=danger，对齐飞书）。
+/// 按钮样式（watch=primary、status=默认、unwatch=danger）。
 fn button_style(action: SelectAction) -> Option<&'static str> {
     match action {
         SelectAction::Watch

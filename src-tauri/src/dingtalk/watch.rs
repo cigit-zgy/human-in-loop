@@ -1,14 +1,14 @@
 //! `/watch` 实时状态卡的钉钉渲染（互动卡片高级版模板变量）。
 //!
 //! 模板：`docs/assets/dingtalk-watch-card-template.json`（导入开发者后台后发布；内置默认 ID
-//! 见 `DEFAULT_WATCH_CARD_TEMPLATE_ID`）。与飞书/TG/Slack 共享同一份 `WatchFrame` 与文案构件，
+//! 见 `DEFAULT_WATCH_CARD_TEMPLATE_ID`）。与 TG/Slack 共享同一份 `WatchFrame` 与文案构件，
 //! 差异仅在载体：钉钉是「模板 + 变量」——标题/足迹折叠进单一 `body_md` markdown 变量；TODO 走
-//! 折叠面板（钉钉有 CollapsePanel 组件，与飞书同级体验：`todo_summary` 作面板标题、`todo_md`
+//! 折叠面板（钉钉有 CollapsePanel 组件：`todo_summary` 作面板标题、`todo_md`
 //! 作内容、`has_todos` 控显隐）；终态用 boolean 变量 `finalized` 条件显隐按钮（复刻提问模板
 //! 已验证的条件渲染手法）。
 //!
 //! 钉钉卡片 markdown 支持 `<font sizeToken/colorTokenV2>` 富文本（提问卡选项已验证），
-//! 故状态圆点与飞书同款彩色 ●（进行中绿 / 已完成灰 / 失败红），正文统一 h5 字号
+//! 故状态圆点使用彩色 ●（进行中绿 / 已完成灰 / 失败红），正文统一 h5 字号
 //! （默认 body 字号偏大，用户反馈显乱）。
 
 use crate::agents::activity::{StepState, ToolStep};
@@ -29,7 +29,7 @@ pub const ACTION_REWATCH: &str = "watch_rewatch";
 const SIZE_BODY: &str = "common_h5_text_style__font_size";
 /// 辅助信息字号（footnote=12px）。
 const SIZE_SMALL: &str = "common_footnote_text_style__font_size";
-/// 圆点/辅文颜色 token（与飞书 green/grey/red 圆点对应）。
+/// 圆点/辅文颜色 token。
 const COLOR_GREEN: &str = "common_green1_color";
 const COLOR_GREY: &str = "common_level3_base_color";
 const COLOR_RED: &str = "common_red1_color";
@@ -112,7 +112,7 @@ fn body_md(f: &WatchFrame, now: u64, lang: Lang) -> String {
 }
 
 /// TODO 折叠面板内容 markdown：进行中绿点加粗、已完成灰点删除线、待办空心圈
-/// （与飞书折叠面板同款；cancelled 条目在解析层已剔除）。
+/// cancelled 条目在解析层已剔除。
 fn todo_md(f: &WatchFrame) -> String {
     use crate::agents::activity::TodoState;
     f.todos
@@ -136,7 +136,7 @@ fn todo_md(f: &WatchFrame) -> String {
         .join("\n\n")
 }
 
-/// 一步足迹的 markdown 行：彩色圆点（进行中绿 / 已完成灰 / 失败红，与飞书同款）+
+/// 一步足迹的 markdown 行：彩色圆点（进行中绿 / 已完成灰 / 失败红）+
 /// `**类别词**: *参数*`（h5 字号）。
 fn render_step_md(step: &ToolStep, lang: Lang) -> String {
     let color = match step.state {
@@ -332,7 +332,7 @@ mod tests {
             },
             state,
         };
-        // 彩色圆点（钉钉 markdown 支持 font colorTokenV2，与飞书同款配色）。
+        // 彩色圆点（钉钉 markdown 支持 font colorTokenV2）。
         assert!(render_step_md(&step(StepState::Running), Lang::Zh)
             .contains("colorTokenV2=common_green1_color>●\u{a0}</font>"));
         assert!(render_step_md(&step(StepState::Done), Lang::Zh)

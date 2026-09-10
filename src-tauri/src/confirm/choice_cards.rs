@@ -170,175 +170,6 @@ pub(crate) fn tool_name(request: &ConfirmRequest) -> &str {
         .unwrap_or("Tool")
 }
 
-fn feishu_tool_elements(request: &ConfirmRequest, lang: Lang) -> Vec<Value> {
-    if is_task_input_form(request) {
-        let mut content = request.detail.summary.clone();
-        if !request.detail.body_md.trim().is_empty() {
-            content.push_str("\n\n");
-            content.push_str(&request.detail.body_md);
-        }
-        return vec![json!({ "tag": "markdown", "content": bounded(&content, 12_000) })];
-    }
-    let mut elements = Vec::new();
-    if !request.detail.summary.trim().is_empty() {
-        elements.push(json!({
-            "tag": "markdown",
-            "content": format!("**{}** {}", reason_label(lang), request.detail.summary),
-        }));
-    }
-    elements.push(json!({
-        "tag": "markdown",
-        "content": format!("**{}**", tool_name(request)),
-    }));
-    if !request.detail.body_md.trim().is_empty() {
-        elements.push(json!({
-            "tag": "markdown",
-            "content": bounded(&request.detail.body_md, 12_000),
-        }));
-    }
-    elements
-}
-
-fn feishu_choice_text(choice: &crate::models::ConfirmChoice, lang: Lang) -> String {
-    let label = if choice.id.starts_with("todo:") {
-        let text_prefix = crate::i18n::tr(lang, "whatsNext.todoPrefix");
-        let text = choice
-            .label
-            .strip_prefix(text_prefix)
-            .unwrap_or(&choice.label);
-        format!(
-            "{}{}",
-            crate::i18n::tr(lang, "channel.feishuTodoPrefix"),
-            text
-        )
-    } else {
-        choice.label.clone()
-    };
-    if choice.description.trim().is_empty() {
-        label
-    } else {
-        format!(
-            "**{}**\n<font color='grey'>{}</font>",
-            label, choice.description
-        )
-    }
-}
-
-pub fn feishu_card(
-    request: &ConfirmRequest,
-    selected: Option<usize>,
-    comment: &str,
-    lang: Lang,
-) -> Value {
-    let mut elements = feishu_tool_elements(request, lang);
-    elements.push(json!({ "tag": "hr", "margin": "0px 0px 0px 0px" }));
-    let choice_indices = task_choice_indices(request);
-    if !is_task_input_form(request) || !choice_indices.is_empty() {
-        for index in choice_indices {
-            let choice = &request.choices[index];
-            let checked = selected == Some(index);
-            let color = if checked {
-                Some(if choice.role == ActionRole::Destructive {
-                    "red"
-                } else {
-                    "blue"
-                })
-            } else {
-                None
-            };
-            elements.push(crate::feishu::card::styled_checker(
-                &format!("confirm_choice_{index}"),
-                &feishu_choice_text(choice, lang),
-                checked,
-                false,
-                Some(json!({ "confirm": "select", "index": index })),
-                color,
-            ));
-        }
-    }
-    let mut form_elements = Vec::new();
-    if let Some(input) = input_for_selected(request, selected) {
-        form_elements.push(json!({
-            "tag": "input",
-            "name": input.id,
-            "label": { "tag": "plain_text", "content": input.label },
-            "placeholder": { "tag": "plain_text", "content": input.placeholder },
-            "default_value": bounded(comment, input.max_chars),
-        }));
-    }
-    form_elements.push(json!({
-        "tag": "button",
-        "name": "confirm_submit",
-        "form_action_type": "submit",
-        "type": "primary",
-        "disabled": selected.is_none(),
-        "text": { "tag": "plain_text", "content": request.presentation.submit_label() },
-        "behaviors": [{ "type": "callback", "value": { "confirm": "submit" } }],
-    }));
-    elements.push(json!({ "tag": "form", "name": "confirm_form", "elements": form_elements }));
-    crate::feishu::card::assemble_styled_card(&request.title, elements)
-}
-
-pub fn feishu_final_card(request: &ConfirmRequest, status: &str, lang: Lang) -> Value {
-    let mut elements = feishu_tool_elements(request, lang);
-    elements.push(json!({ "tag": "hr", "margin": "0px 0px 0px 0px" }));
-    elements.push(json!({
-        "tag": "div",
-        "text": {
-            "tag": "plain_text",
-            "content": status,
-            "text_size": "notation",
-            "text_color": "grey",
-        },
-    }));
-    crate::feishu::card::assemble_styled_card(&request.title, elements)
-}
-
-fn value_object(value: &Value) -> Option<Value> {
-    match value {
-        Value::String(text) => serde_json::from_str(text).ok(),
-        other => Some(other.clone()),
-    }
-}
-
-pub fn parse_feishu_action(event: &Value, input_id: Option<&str>) -> Option<CardAction> {
-    let actor = event.get("operator")?.get("open_id")?.as_str()?.to_string();
-    let message_id = event
-        .get("context")?
-        .get("open_message_id")?
-        .as_str()?
-        .to_string();
-    let action = event.get("action")?;
-    let value = value_object(action.get("value")?)?;
-    match value.get("confirm").and_then(Value::as_str)? {
-        "select" => Some(CardAction::Select {
-            actor,
-            message_id,
-            index: value.get("index")?.as_u64()? as usize,
-            comment: input_id
-                .and_then(|id| action.get("form_value").and_then(|form| form.get(id)))
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .map(str::to_string),
-        }),
-        "submit" => {
-            let comment = input_id
-                .and_then(|id| action.get("form_value").and_then(|form| form.get(id)))
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|text| !text.is_empty())
-                .map(str::to_string);
-            Some(CardAction::Submit {
-                actor,
-                message_id,
-                index: None,
-                comment,
-            })
-        }
-        _ => None,
-    }
-}
-
 fn slack_escape(text: &str) -> String {
     crate::slack::markdown::escape(text)
 }
@@ -835,10 +666,6 @@ mod tests {
     #[test]
     fn task_input_forms_hide_semantic_choice_controls() {
         let request = task_request();
-        let feishu = feishu_card(&request, Some(0), "", Lang::En).to_string();
-        assert!(!feishu.contains("confirm_choice_0"));
-        assert!(feishu.contains("Start task"));
-
         let slack = slack_blocks(&request, Some(0), "", Lang::En).to_string();
         assert!(!slack.contains("radio_buttons"));
         assert!(slack.contains("plain_text_input"));
@@ -865,14 +692,6 @@ mod tests {
             ConfirmPresentation::SingleSelectSubmit { input, .. } => input.as_mut().unwrap(),
         };
         input.always_visible = true;
-
-        let feishu = feishu_card(&request, Some(1), "extra", Lang::En).to_string();
-        assert!(feishu.contains("confirm_choice_0"));
-        assert!(feishu.contains("confirm_choice_1"));
-        assert!(!feishu.contains("confirm_choice_2"));
-        assert!(feishu.contains("【TODO】"));
-        assert!(!feishu.contains("Run todo:"));
-        assert!(feishu.contains("extra"));
 
         let slack = slack_blocks(&request, Some(1), "extra", Lang::En).to_string();
         assert!(slack.contains("radio_buttons"));
@@ -955,10 +774,6 @@ mod tests {
         let slack = slack_blocks(&request, None, "", Lang::En).to_string();
         assert!(slack.contains("Session cargo build"));
         assert!(!slack.contains("\"Session cargo\""));
-
-        let feishu = feishu_card(&request, None, "", Lang::En).to_string();
-        assert!(feishu.contains("confirm_choice_2"));
-        assert!(!feishu.contains("confirm_choice_1"));
     }
 
     #[test]
@@ -974,45 +789,6 @@ mod tests {
         assert!(keyboard.contains("pc:do:0"));
         let html = telegram_html(&request, Some(0), "", None, Lang::En);
         assert!(html.contains("reply with extra instructions"));
-    }
-
-    #[test]
-    fn feishu_uses_ask_checker_and_tool_first_hierarchy() {
-        let card = feishu_card(&request(), Some(1), "", Lang::En);
-        let elements = card["body"]["elements"].as_array().unwrap();
-        assert_eq!(elements[0]["tag"], "div");
-        assert_eq!(elements[0]["text"]["content"], "Permission");
-        assert_eq!(elements[2]["tag"], "markdown");
-        assert_eq!(elements[2]["content"], "**Reason:** Run");
-        assert_eq!(elements[3]["content"], "**Bash**");
-        assert!(elements[4]["content"]
-            .as_str()
-            .unwrap()
-            .contains("git status"));
-        let checkers: Vec<&Value> = elements
-            .iter()
-            .filter(|element| element["tag"] == "checker")
-            .collect();
-        assert_eq!(checkers.len(), 2);
-        assert_eq!(checkers[0]["checked"], false);
-        assert_eq!(checkers[0]["behaviors"][0]["value"]["confirm"], "select");
-        assert_eq!(checkers[1]["checked"], true);
-        assert_eq!(checkers[1]["text"]["text_color"], "red");
-        assert!(elements
-            .iter()
-            .all(|element| element["tag"] != "column_set"));
-        assert!(!card.to_string().contains("**Tool:**"));
-    }
-
-    #[test]
-    fn feishu_final_keeps_compact_tool_hierarchy_without_context() {
-        let card = feishu_final_card(&request(), "Submitted", Lang::En);
-        let text = card.to_string();
-        assert!(text.contains("**Bash**"));
-        assert!(text.contains("git status"));
-        assert!(text.contains("Submitted"));
-        assert!(!text.contains("**Tool:**"));
-        assert!(!text.contains("confirm_choice_"));
     }
 
     #[test]
@@ -1167,23 +943,5 @@ mod tests {
         assert_eq!(rows[0][0]["text"], "Approve");
         assert_eq!(rows[0][1]["text"], "Deny");
         assert_eq!(rows[0][0]["callback_data"], "pc:do:0");
-    }
-
-    #[test]
-    fn feishu_parser_never_accepts_action_ids() {
-        let event = json!({
-            "operator": { "open_id": "u1" },
-            "context": { "open_message_id": "m1" },
-            "action": { "value": { "confirm": "select", "index": 1 } },
-        });
-        assert_eq!(
-            parse_feishu_action(&event, None),
-            Some(CardAction::Select {
-                actor: "u1".into(),
-                message_id: "m1".into(),
-                index: 1,
-                comment: None,
-            })
-        );
     }
 }

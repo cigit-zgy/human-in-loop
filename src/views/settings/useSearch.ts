@@ -135,10 +135,6 @@ export function useSettingsSearch(deps: {
         "settings.integration.manualLifecycleHint",
       ]),
       // 通信渠道
-      e("channel", "settings.channels.feishuTitle", [
-        "settings.channels.appId",
-        "settings.channels.appSecret",
-      ]),
       e("channel", "settings.channels.imessageTitle", [
         "settings.channels.imessageRecipient",
         "settings.channels.imessageIdentityMode",

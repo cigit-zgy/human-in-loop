@@ -139,7 +139,6 @@ function writePopupOnlyConfig(home) {
       popup: { enabled: true },
       telegram: { enabled: false },
       dingding: { enabled: false },
-      feishu: { enabled: false },
       slack: { enabled: false },
       autoActivation: false,
     },

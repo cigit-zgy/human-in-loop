@@ -10,7 +10,7 @@
 //! 编排逻辑复用 `conversation::run_conversation`，本文件提供传输实现 `SlackSession`
 //! （`MessagingChannel`）+ 薄外层 `SlackChannel`。
 //!
-//! 与飞书差异：终态不能「禁用控件保留外观」，故收尾用 `chat.update` 把卡片替换为**静态终态**
+//! 终态不能「禁用控件保留外观」，故收尾用 `chat.update` 把卡片替换为**静态终态**
 //! （回显已选项 + 补充文字 + 状态行，移除控件）；ack 在 `ws` 层收帧即完成，无需 oneshot 回包。
 
 use super::conversation::{run_conversation, InboundReply, MessagingChannel, QuestionCtx};

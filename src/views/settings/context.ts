@@ -3,12 +3,7 @@
 // createSettingsContext 的返回值推导，无须手工维护巨型 interface。
 import { inject, provide, ref, type InjectionKey, type Ref } from "vue";
 import { saveSettings } from "../../lib/ipc";
-import type {
-  AppConfig,
-  SecretAction,
-  SecretActions,
-  SecretsPresent,
-} from "../../lib/types";
+import type { AppConfig } from "../../lib/types";
 import { useGeneralSettings } from "./useGeneralSettings";
 import { useAboutUpdates } from "./useAboutUpdates";
 import { useIntegration } from "./useIntegration";
@@ -33,77 +28,22 @@ function parseInitialTab(): Tab {
 export interface SettingsCore {
   config: Ref<AppConfig | null>;
   activeTab: Ref<Tab>;
-  secretsPresent: Ref<SecretsPresent>;
   persist: () => Promise<void>;
 }
-
-type ClearedKey = "feishu";
 
 function createCore() {
   const config = ref<AppConfig | null>(null);
   const activeTab = ref<Tab>(parseInitialTab());
 
-  // Secrets are never loaded into the UI; we only know whether each is configured (for the
-  // placeholder) and track an explicit "cleared" intent until the next save.
-  const secretsPresent = ref<SecretsPresent>({
-    feishuSecret: false,
-  });
-  const secretCleared = ref({
-    feishu: false,
-  });
-  const SECRET_PLACEHOLDER = "••••••••";
-
-  // Build a secret's edit intent: a typed value wins (set); else an explicit clear; else unchanged.
-  function secretActionFor(value: string, cleared: boolean): SecretAction {
-    if (value && value.length > 0) return { kind: "set", value };
-    if (cleared) return { kind: "clear" };
-    return { kind: "unchanged" };
-  }
-
   async function persist() {
     if (!config.value) return;
-    const c = config.value.channels;
-    const actions: SecretActions = {
-      feishuSecret: secretActionFor(c.feishu.appSecret, secretCleared.value.feishu),
-    };
-    await saveSettings(config.value, actions);
-    // Reflect the saved state: a set secret becomes a "Saved" placeholder, a cleared one becomes
-    // empty. Wipe the field so the secret is never re-sent on subsequent saves.
-    finalizeSecret(actions.feishuSecret, "feishuSecret", "feishu");
-  }
-
-  function finalizeSecret(
-    action: SecretAction,
-    presentKey: keyof SecretsPresent,
-    clearedKey: ClearedKey
-  ) {
-    if (!config.value) return;
-    if (action.kind === "set") secretsPresent.value[presentKey] = true;
-    else if (action.kind === "clear") secretsPresent.value[presentKey] = false;
-    if (action.kind !== "unchanged") {
-      const c = config.value.channels;
-      c.feishu.appSecret = "";
-    }
-    secretCleared.value[clearedKey] = false;
-  }
-
-  // "Clear" button: drop the saved secret (deletes the keychain entry on save) and re-persist so
-  // the daemon reloads with the secret gone.
-  function clearSecret(channel: ClearedKey) {
-    if (!config.value) return;
-    const c = config.value.channels;
-    c.feishu.appSecret = "";
-    secretCleared.value[channel] = true;
-    persist();
+    await saveSettings(config.value);
   }
 
   return {
     config,
     activeTab,
-    secretsPresent,
-    SECRET_PLACEHOLDER,
     persist,
-    clearSecret,
   };
 }
 
