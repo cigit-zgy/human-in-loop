@@ -13,6 +13,7 @@ This directory is the sole current living-design authority. Historical reasoning
 | `06_codex_integration.md` | `codex-integration` | Machine-wide Codex activation, semantic checkpoint classification, terminal reporting, and consolidated host setup/recovery behavior |
 | `07_macos_runtime_deployment.md` | `macos-runtime-deployment` | Stable macOS code identity, one-time onboarding/bootstrap, TCC lifecycle, `SETUP_COMPLETE`, recovery, protected-folder behavior, and unattended normal operation |
 | `08_terminal_notification.md` | `terminal-notification` | Default-zero progress notifications, one terminal notification per task, and same-message labeled report/link presentation |
+| `09_optional_bot_autologin.md` | `optional-bot-autologin` | Explicit opt-in automatic login for the dedicated non-admin Bot user, host feasibility/security boundaries, and manual post-reboot fallback |
 
 Routine reading: start here, then load only the topic that owns the active concern. Load `00_overview.md` only when whole-system context is needed.
 
