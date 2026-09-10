@@ -53,7 +53,7 @@ normal terminal task state
 → return the normal final Codex response
 ```
 
-The Codex-home AGENTS layer stays thin. It does not copy the full classifier, MCP schema, transport details, iMessage grammar, Feishu details, or macOS setup manual.
+The Codex-home AGENTS layer stays thin. It does not copy the full classifier, MCP schema, transport details, iMessage grammar, or macOS setup manual.
 
 # Checkpoint classifier
 

@@ -18,6 +18,8 @@ cigit-zgy/human-in-loop
 
 Current project design authority lives in `design/`. This Skill is the Codex-facing operational projection of `design/05_mcp_interface.md`, `design/06_codex_integration.md`, `design/08_terminal_notification.md`, `design/09_optional_bot_autologin.md`, and the setup/recovery boundary in `design/07_macos_runtime_deployment.md`.
 
+The maintained remote delivery channel is Apple Messages using explicit iMessage only. If that channel is unavailable, mandatory decisions fail closed; no alternate remote or carrier transport is selected.
+
 ## Capability boundary
 
 Two public MCP tools have different semantics:

@@ -182,7 +182,6 @@ Do not redesign or weaken:
 - Bot user / distinct Apple Account topology;
 - Messages DB and worker IPC boundary;
 - send/watch/correlation lifecycle except reply syntax/token rendering;
-- Feishu behavior;
 - daemon lifecycle;
 - TCC/signing/bootstrap;
 - canonical HOME migration;

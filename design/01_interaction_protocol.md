@@ -18,7 +18,7 @@ The canonical interaction is the existing AskHuman structured confirmation model
 
 The iMessage surface is a **remote decision notification**, not a complete task viewer. Its job is to expose only the information required to make a safe bounded choice on a phone. Detailed logs, diffs, commands, long explanations, and complete task context remain in the local AskHuman/Codex surface.
 
-The iMessage channel supports **one structured confirmation at a time per rendered request**. General free-form `AskRequest`, multi-question questionnaires, arbitrary Markdown, and form-like interactions are not downgraded into iMessage text; they are unsupported on iMessage and may still be delivered through Feishu.
+The iMessage channel supports **one structured confirmation at a time per rendered request**. General free-form `AskRequest`, multi-question questionnaires, arbitrary Markdown, and form-like interactions are not downgraded into iMessage text; they are unsupported by the maintained remote surface and fail closed.
 
 # Canonical semantics
 
@@ -164,7 +164,7 @@ Budgeting rules:
 1. Never truncate a repository label, choice label, request token, question, or context required for a safe decision.
 2. Remove optional explanatory/context lines before compacting decision-critical information.
 3. For repository-associated requests, preserve the compact `<source> · <repository-name>` line before removing other optional context.
-4. If the critical representation still exceeds the hard limit, iMessage marks the request unsupported and sends nothing for that request. Feishu may continue independently.
+4. If the critical representation still exceeds the hard limit, iMessage marks the request unsupported and sends nothing for that request.
 5. A request may exceed the 500-character target when genuinely necessary but must remain within the 700-character hard limit.
 6. The renderer never splits one decision across multiple iMessages merely to bypass the budget.
 
@@ -210,7 +210,7 @@ iMessage token + numeric option
 
 Mode-specific identity/correlation semantics are owned by `03_imessage_channel.md`; renderer compaction must not weaken them.
 
-Feishu card callbacks map directly to the same stable choice identity. Agents never receive transport-specific reply syntax as the semantic result.
+Agents never receive transport-specific reply syntax as the semantic result.
 
 # Design acceptance
 

@@ -4,7 +4,8 @@ title: Channel coordination
 status: active
 role: design_authority
 summary: >
-  Defines activation, support checks, racing, interruption, and fallback for the Feishu and iMessage channels.
+  Defines iMessage activation, request support, readiness, interruption, and
+  fail-closed canonical result normalization.
 operational_projection:
   - src-tauri/src/channels/mod.rs
   - src-tauri/src/app/
@@ -12,71 +13,53 @@ operational_projection:
   - src/views/settings/ChannelsTab.vue
 ---
 
-# Supported channels
+# Maintained remote channel
 
-The maintained product exposes exactly two remote delivery channels:
+The maintained product exposes exactly one remote delivery channel:
 
 ```text
-feishu
 imessage
 ```
 
-Existing AskHuman Telegram, Slack, DingTalk, and local popup delivery are outside the maintained delivery surface. Their code/config/docs should be removed during implementation when removal does not destroy unrelated settings/history functionality.
+Existing AskHuman-era remote channels and local popup delivery are outside the maintained delivery surface. Historical implementation provenance does not make them supported runtime capabilities.
 
 # Channel support is request-specific
 
-A configured channel may decline a request before sending:
-
-```text
-Feishu
-→ supports the canonical structured confirmations and the retained broader AskHuman interactions permitted by its current card/text implementation
-
-iMessage
-→ supports only the bounded structured confirmation profile defined in interaction-protocol
-```
-
-Declining an unsupported request is not a channel failure and must not emit a partial message.
+A configured iMessage channel may decline a request before sending. It supports only the bounded structured confirmation profile defined in `01_interaction_protocol.md`. Declining an unsupported request is not a transport failure and must not emit a partial message.
 
 # Channel readiness
 
 The iMessage channel may participate only when its `ready` state satisfies the Bot session and sender/recipient identity prerequisites owned by `03_imessage_channel.md`. In particular, `BOT_SESSION_LOGIN_REQUIRED`, `BOT_MESSAGES_ACCOUNT_UNAVAILABLE`, `BOT_SENDER_IDENTITY_UNVERIFIED`, and `SELF_MESSAGE_UNSUPPORTED` make iMessage ineligible without relaxing any transport rule.
 
-Readiness remains channel-local. When iMessage is `BOT_SESSION_LOGIN_REQUIRED` after a reboot, an independently ready Feishu channel may still deliver and complete the request. The coordinator does not reinterpret that iMessage health state as a Feishu failure.
+When iMessage reports `BOT_SESSION_LOGIN_REQUIRED` after a reboot, the remote request remains unavailable until the dedicated Bot session is restored. The coordinator does not reinterpret that health state or invent a fallback.
 
-# Parallel delivery and first-answer semantics
+# Exactly-once terminal semantics
 
-When both channels are enabled and both support a request:
+For each supported request:
 
 ```text
 request
-→ start Feishu session
-→ start iMessage session
+→ start one iMessage session
 → first valid terminal answer reaches Coordinator
 → Coordinator accepts exactly once
-→ losing channel receives interruption/finalization
+→ watcher/session receives interruption/finalization
 ```
 
-The existing AskHuman coordinator/preemption pattern is retained. Duplicate or late replies from the losing channel are ignored as terminal answers.
+The existing canonical coordinator/terminal-gate pattern is retained. Duplicate or late replies are ignored as terminal answers.
 
 # Failure and fallback
 
-Channel failures remain independent:
-
-- Feishu network/configuration failure does not relax iMessage transport rules.
-- iMessage unavailable/unsupported does not cause SMS or any other transport fallback.
-- If one channel fails or declines and the other remains valid, the surviving channel continues.
-- If no enabled channel can safely deliver the request, AskHuman returns the existing no-channel/error outcome rather than inventing a third path.
+iMessage unavailable/unsupported does not cause SMS or any other transport fallback. If it cannot safely deliver the request, AskHuman returns the existing no-channel/error outcome rather than inventing another path.
 
 # Configuration surface
 
 Settings expose only:
 
 ```text
-Feishu
 Apple Messages (iMessage only)
 ```
 
-Legacy channel credentials/settings may be migrated or removed during implementation. Do not preserve dormant compatibility UI solely for old channel types unless migration is required to avoid corrupting existing configuration files; any such migration must end in the two-channel normal form.
+Unknown fields from older configuration files are ignored or migrated without accessing obsolete credentials. Canonical serialization contains only the maintained iMessage channel configuration.
 
 # History and source identity
 
@@ -84,4 +67,4 @@ History records the canonical request/result plus winning `source_channel_id`. C
 
 # Design acceptance
 
-This concern is complete when unsupported or non-ready iMessage requests never partially send, exactly one terminal answer can win, `BOT_SESSION_LOGIN_REQUIRED` leaves an independently ready Feishu path usable, removing legacy channels leaves no hidden auto-routing path, and channel failure cannot bypass iMessage-only, distinct-identity, or structured-decision invariants.
+This concern is complete when unsupported or non-ready iMessage requests never partially send, exactly one terminal answer can win, no hidden remote fallback path exists, and channel failure cannot bypass iMessage-only, distinct-identity, or structured-decision invariants.

@@ -163,7 +163,7 @@ unsupported state never disables security controls
 manual fallback remains valid and reaches SETUP_COMPLETE
 no password/credential persistence or logging
 idempotent repeated setup
-existing Bot/TCC/MCP/iMessage/Feishu/notification behavior unchanged
+existing Bot/TCC/MCP/iMessage/notification behavior unchanged
 ```
 
 Machine-bound qualification must not reboot the User's Mac unless a separate current User/task instruction explicitly authorizes that disruptive action. Non-mutating state inspection plus supported configuration-state verification is sufficient for normal implementation qualification; a future real reboot may provide additional operational evidence.

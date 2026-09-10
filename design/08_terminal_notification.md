@@ -108,7 +108,7 @@ This policy does not change:
 - rich multiline decision `detail`;
 - iMessage-only/no-SMS transport;
 - Bot user / Apple Account topology;
-- Feishu transport;
+- maintained iMessage transport;
 - daemon lifecycle;
 - TCC/bootstrap/signing;
 - MCP public tool count or result schemas.

@@ -4,8 +4,8 @@ title: System overview
 status: active
 role: design_authority
 summary: >
-  Defines a two-channel human-in-the-loop product with a narrow MCP surface,
-  Feishu, and a dedicated distinct-account Apple Messages Bot transport that is
+  Defines an iMessage-only human-in-the-loop product with a narrow MCP surface
+  and a dedicated distinct-account Apple Messages Bot transport that is
   interactively configured once and unattended during normal operation.
 operational_projection:
   - SKILL.md
@@ -44,7 +44,6 @@ MCP surface
     └── notify_human   non-blocking notification
     ↓
 canonical coordinator + dispatch
-    ├── Feishu renderer/transport
     └── Apple Messages renderer in the primary macOS user
              ↓
        narrow authenticated local IPC
@@ -67,7 +66,6 @@ The product originated by adapting the pinned AskHuman application/core basis an
 Supported remote delivery channels are exactly:
 
 ```text
-feishu
 imessage
 ```
 
@@ -101,9 +99,9 @@ public unauthenticated MCP HTTP service
 
 1. **Distinct Apple identities in production.** The Apple Messages production sender account and recipient account are different (`sender_account != recipient_account`). `03_imessage_channel.md` owns identity evidence and fail-closed consequences.
 2. **Free Apple path only.** Apple Messages delivery explicitly uses iMessage. Any state where iMessage cannot be proven fails closed; it never falls back to carrier messaging.
-3. **One canonical decision object.** Channel presentation never becomes a second decision-semantic source. Feishu and iMessage render the same canonical confirmation/result identities.
+3. **One canonical decision object.** iMessage presentation never becomes a second decision-semantic source; it renders the canonical confirmation and returns the canonical result identity.
 4. **Decision and notification are distinct.** `ask_human` blocks for one correlated semantic choice; `notify_human` never manufactures an acknowledgement decision and never waits for a response.
-5. **First valid answer wins.** When both channels participate in one confirmation, only the first valid terminal result is accepted.
+5. **First valid answer wins.** Only the first valid terminal result for one confirmation is accepted; duplicate or late replies are ignored.
 6. **Terminal notification cannot falsify task truth.** A failed `notify_human` attempt is reported separately and does not rewrite the established task verdict.
 7. **External transport stays external.** `imsg` is installed/version-checked as an external dependency; its source is not vendored into this project.
 8. **One-time interactive setup, unattended normal operation.** Installation may require explicit User interaction for Bot-user creation, Apple Account login, one bounded administrator bootstrap, macOS privacy consent, and initial notification qualification. After `SETUP_COMPLETE`, ordinary Codex/MCP/channel operation must not require passwords, Fast User Switching, or repeated TCC/privacy prompts.
@@ -145,7 +143,6 @@ blocking decisions remain exactly correlated and fail closed
 AND terminal notifications remain non-blocking and verdict-preserving
 AND Apple Messages uses a distinct Bot Apple Account in a dedicated logged-in macOS session
 AND iMessage has no reachable SMS/MMS/RCS/carrier path
-AND Feishu remains independently functional
 AND the local MCP/Skill integration uses one canonical coordinator
 AND the installation can reach SETUP_COMPLETE through a bounded documented onboarding flow
 AND after SETUP_COMPLETE normal operation is unattended with zero recurring password, user-switch, or privacy-consent prompts

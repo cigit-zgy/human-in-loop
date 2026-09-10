@@ -14,10 +14,6 @@ This directory is the sole current living-design authority. Historical reasoning
 | `08_terminal_notification.md` | `terminal-notification` | Default-zero progress notifications, one terminal notification per task, and same-message report/link presentation |
 | `09_optional_bot_autologin.md` | `optional-bot-autologin` | Explicit opt-in automatic login for the dedicated non-admin Bot user, host feasibility/security boundaries, and manual post-reboot fallback |
 | `10_mobile_reply_and_link_presentation.md` | `mobile-reply-and-link-presentation` | Decimal-only `TOKEN-OPTION` phone replies and no-large-preview report-link qualification |
-| `11_imessage_only_product_scope.md` | `imessage-only-product-scope` | Sole maintained remote channel = iMessage; complete removal of Feishu from the current product surface and recovery of the blocked daemon startup path |
-
-`11_imessage_only_product_scope.md` supersedes any stale Feishu/two-channel clause remaining in older current-design topics until the implementation task mechanically purges those clauses. Feishu has no current design authority.
-
 Routine reading: start here, then load only the topic that owns the active concern. Load `00_overview.md` only when whole-system context is needed.
 
 Codex-facing operational behavior is projected into repository-root `SKILL.md`; transport implementation details remain in their owning design topics and code.

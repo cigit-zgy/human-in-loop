@@ -33,13 +33,13 @@ MCP client
 ├── ask_human
 │   → canonical confirmation request
 │   → existing coordinator
-│   → configured channel(s)
+│   → configured iMessage channel
 │   → canonical correlated result
 │   → MCP result
 │
 └── notify_human
     → canonical compact notification
-    → configured channel renderer/transport(s)
+    → configured iMessage renderer/transport
     → bounded dispatch result
     → MCP result without waiting for a human reply
 ```
@@ -199,7 +199,7 @@ recipient
 phone number
 Apple Account / iMessage address
 chat id / GUID
-Feishu credentials
+obsolete channel credentials
 channel-specific send arguments
 SMS/carrier settings
 raw imsg commands
@@ -227,7 +227,7 @@ The tool distinction is semantic and must remain visible in code/tests:
 ```text
 ask_human
 → creates an active decision request
-→ may race configured channels
+→ starts one configured iMessage request
 → waits for exactly one correlated terminal answer
 → cancellation cleans active request state
 
@@ -292,7 +292,7 @@ notify_human compact status/summary/task/locator propagation
 notify_human bounded dispatch result
 no transport secrets in either schema/result/logs
 same-account iMessage decision regression
-Feishu/coordinator regression
+iMessage-only coordinator regression
 no generic command/file capability exposed
 ```
 
@@ -318,5 +318,5 @@ AND evidence is never silently truncated or flattened into compact metadata
 AND both reuse the existing maintained channel infrastructure
 AND neither exposes transport secrets or generic local execution
 AND no second confirmation/coordinator/server model is introduced
-AND existing iMessage/Feishu invariants do not regress
+AND existing iMessage invariants do not regress
 ```
