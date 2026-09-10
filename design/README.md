@@ -14,6 +14,8 @@ This directory is the sole current living-design authority. Historical reasoning
 | `08_terminal_notification.md` | `terminal-notification` | Default-zero progress notifications, one terminal notification per task, and same-message report/link presentation |
 | `09_optional_bot_autologin.md` | `optional-bot-autologin` | Explicit opt-in automatic login for the dedicated non-admin Bot user, host feasibility/security boundaries, and manual post-reboot fallback |
 | `10_mobile_reply_and_link_presentation.md` | `mobile-reply-and-link-presentation` | Decimal-only `TOKEN-OPTION` phone replies and no-large-preview report-link qualification |
+| `11_imessage_inbound_sync_recovery.md` | `imessage-inbound-sync-recovery` | Diagnose and recover Apple-delivered replies that fail to become watcher-visible Bot Messages rows without weakening correlation or privacy |
+
 Routine reading: start here, then load only the topic that owns the active concern. Load `00_overview.md` only when whole-system context is needed.
 
 Codex-facing operational behavior is projected into repository-root `SKILL.md`; transport implementation details remain in their owning design topics and code.
