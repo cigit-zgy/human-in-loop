@@ -941,7 +941,7 @@ mod tests {
                 .clone()
                 .into_request("request-1".into(), 1, 2)
                 .unwrap(),
-            "7F32",
+            "48273",
             &task.source,
             Some("human-in-loop"),
         )
@@ -994,7 +994,7 @@ mod tests {
             .into_request("synthetic-wme".into(), 1, 2)
             .unwrap();
         let rendered =
-            crate::channels::imessage::render_confirmation(&request, "7F32", &task.source, None)
+            crate::channels::imessage::render_confirmation(&request, "48273", &task.source, None)
                 .unwrap();
         assert!(rendered.text.contains(DETAIL));
         assert_eq!(rendered.choice_indices, vec![0, 1, 2, 3, 4]);
@@ -1126,7 +1126,7 @@ mod tests {
         let request = task.spec.into_request("long-input".into(), 1, 2).unwrap();
         assert!(crate::channels::imessage::render_confirmation(
             &request,
-            "7F32",
+            "48273",
             &task.source,
             None
         )

@@ -390,10 +390,7 @@ fn validate_request(
                 .collect::<std::collections::HashSet<_>>();
             if request_id.trim().is_empty()
                 || request_id.chars().count() > 128
-                || !(4..=64).contains(&token.len())
-                || !token
-                    .bytes()
-                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_lowercase())
+                || !super::imessage::valid_token(token)
                 || text.is_empty()
                 || text.chars().count() > rendered_max_chars
                 || !(2..=6).contains(&choice_indices.len())
@@ -1232,7 +1229,7 @@ mod tests {
     #[test]
     fn protocol_accepts_only_bounded_confirmation_and_notification_shapes() {
         let confirm: WorkerRequest = serde_json::from_str(
-            r#"{"operation":"confirm","recipient":"person@example.com","requestId":"r1","token":"7F32","text":"Question","choiceIndices":[0,1],"expiresAtMs":2000}"#,
+            r#"{"operation":"confirm","recipient":"person@example.com","requestId":"r1","token":"48273","text":"Question","choiceIndices":[0,1],"expiresAtMs":2000}"#,
         )
         .unwrap();
         assert!(matches!(confirm, WorkerRequest::Confirm { .. }));
@@ -1242,7 +1239,7 @@ mod tests {
         .unwrap();
         assert!(matches!(notify, WorkerRequest::Notify { .. }));
         assert!(serde_json::from_str::<WorkerRequest>(
-            r#"{"operation":"confirm","recipient":"person@example.com","requestId":"r1","token":"7F32","text":"Question","choiceIndices":[0,1],"expiresAtMs":2000,"file":"/tmp/a"}"#
+            r#"{"operation":"confirm","recipient":"person@example.com","requestId":"r1","token":"48273","text":"Question","choiceIndices":[0,1],"expiresAtMs":2000,"file":"/tmp/a"}"#
         )
         .is_err());
 
@@ -1445,7 +1442,7 @@ mod tests {
         let mut request = WorkerRequest::Confirm {
             recipient: "person@example.com".into(),
             request_id: "request-1".into(),
-            token: "7F32".into(),
+            token: "48273".into(),
             text: "Question".into(),
             choice_indices: vec![0, 1],
             expires_at_ms: 2_000,
@@ -1458,6 +1455,24 @@ mod tests {
             validate_request(&config, &channel("person@example.com"), &request),
             Err(crate::channels::imessage::HealthState::MessagesUnavailable)
         );
+
+        if let WorkerRequest::Confirm { choice_indices, .. } = &mut request {
+            *choice_indices = vec![0, 1];
+        }
+        for invalid in ["4827", "04827", "A7F31", "48273-1", "48273 1"] {
+            if let WorkerRequest::Confirm { token, .. } = &mut request {
+                *token = invalid.into();
+            }
+            assert_eq!(
+                validate_request(&config, &channel("person@example.com"), &request),
+                Err(crate::channels::imessage::HealthState::MessagesUnavailable),
+                "accepted malformed token {invalid:?}"
+            );
+        }
+        if let WorkerRequest::Confirm { token, .. } = &mut request {
+            *token = "48273".into();
+        }
+        assert!(validate_request(&config, &channel("person@example.com"), &request).is_ok());
     }
 
     #[test]
@@ -1469,7 +1484,7 @@ mod tests {
         let confirmation = WorkerRequest::Confirm {
             recipient: "person@example.com".into(),
             request_id: "request-1".into(),
-            token: "7F32".into(),
+            token: "48273".into(),
             text: "界".repeat(1501),
             choice_indices: vec![0, 1],
             expires_at_ms: 2_000,

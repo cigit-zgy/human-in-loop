@@ -83,7 +83,11 @@ const richDetail = [
 assert([...richDetail].length >= 600 && [...richDetail].length <= 800, 'rich detail fixture must stay WME-sized');
 const notification = (notificationId, status = 'PASS') => ({ repository_path: repo, source_agent: 'Codex', status,
   summary: 'Synthetic terminal verification 完成', task_id: 'SYNTHETIC-VERIFICATION',
-  context: [{ label: 'Checks', value: 'Passed' }], locator: 'reports/codex/synthetic.md', notification_id: notificationId });
+  context: [{ label: 'Checks', value: 'Passed' }],
+  locator: status === 'PASS'
+    ? 'https://github.com/cigit-zgy/human-in-loop/blob/deadbeef/report.md?mode=raw%20copy#result'
+    : 'reports/codex/synthetic.md',
+  notification_id: notificationId });
 const rejected = (response) => Boolean(response.error || response.result?.isError);
 const result = (response, requestId, selected = 'received_correctly') => {
   assert(!rejected(response), 'expected canonical result');
@@ -106,14 +110,14 @@ async function waiting(client, args) {
   const request = client.ask(args);
   await until(() => ready().length > count, 'request watcher started');
   const record = lines('sent.jsonl').at(-1);
-  const token = /^\[HIL · ([A-F0-9]+)\]/u.exec(record.text)?.[1];
+  const token = /^\[HIL · ([1-9][0-9]{4}(?:[0-9]{2})*)\]/u.exec(record.text)?.[1];
   assert(token, 'production renderer token');
   assert(record.text.split('\n').includes('Codex · human-in-loop'));
   return { request, record, token };
 }
 function reply(pending, overrides = {}) {
   return { id: pending.record.id + 1, chat_id: 42, guid: `synthetic-reply-${pending.record.id}`,
-    created_at: new Date().toISOString(), is_from_me: true, text: `${pending.token} 1`, ...overrides };
+    created_at: new Date().toISOString(), is_from_me: true, text: `${pending.token}-1`, ...overrides };
 }
 function emit(...records) { fs.appendFileSync(path.join(root, 'replies.jsonl'), `${records.map(JSON.stringify).join('\n')}\n`); }
 const clients = [];
@@ -243,11 +247,11 @@ try {
   check('WME-sized synthetic multiline detail crosses real MCP, daemon, coordinator and production renderer', { detail_chars: [...richDetail].length, choices: 5, application_sends: 1, canonical_results: 1 });
 
   const correlated = await waiting(client, base('strict-correlation'));
-  const wrong = correlated.token === 'FFFF' ? 'EEEE' : 'FFFF';
-  const stale = /^\[HIL · ([A-F0-9]+)\]/u.exec(lines('sent.jsonl').at(-2).text)[1];
-  emit(reply(correlated, { text: '1' }), reply(correlated, { text: `${wrong} 1` }),
-    reply(correlated, { text: `${stale} 1` }), reply(correlated, { text: `${correlated.token} 0` }),
-    reply(correlated, { text: `${correlated.token} 3` }), reply(correlated, { chat_id: 43 }),
+  const wrong = correlated.token === '99999' ? '88888' : '99999';
+  const stale = /^\[HIL · ([1-9][0-9]{4}(?:[0-9]{2})*)\]/u.exec(lines('sent.jsonl').at(-2).text)[1];
+  emit(reply(correlated, { text: '1' }), reply(correlated, { text: `${wrong}-1` }),
+    reply(correlated, { text: `${stale}-1` }), reply(correlated, { text: `${correlated.token}-0` }),
+    reply(correlated, { text: `${correlated.token}-3` }), reply(correlated, { chat_id: 43 }),
     reply(correlated, { id: correlated.record.id }), reply(correlated, { guid: correlated.record.guid }),
     reply(correlated, { is_reaction: true }), reply(correlated, { attachments: [{}] }),
     reply(correlated, { reply_to_guid: 'other-request' }), correlated.record);
@@ -346,7 +350,8 @@ try {
     for (const value of [terminalStatus, 'Codex', 'human-in-loop', args.summary, args.task_id, args.locator, 'Checks: Passed']) {
       assert(rendered.includes(value), 'notification must preserve compact status, identity, summary, task, locator, and context');
     }
-    assert(rendered.includes(`Report: ${args.locator}`), 'locator must stay in the same application message with its Report label');
+    assert(rendered.includes(`Report: ${args.locator.startsWith('http') ? `"${args.locator}"` : args.locator}`),
+      'locator must stay in the same application message with its Report label and selected wrapper');
     assert.equal(ready().length, watcherCount, 'notification must not start a decision reply watcher');
     assert.equal(lines('replies.jsonl').length, repliesBefore, 'notification completes without synthetic acknowledgement');
     assert.equal(sends(), before + 1);

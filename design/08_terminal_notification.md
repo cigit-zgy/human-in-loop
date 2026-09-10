@@ -80,10 +80,11 @@ Do not include complete reports, long logs, credentials, private transport ident
 
 A locator belongs to the same application message as the terminal summary. Never send a second link-only iMessage merely to expose the report URL.
 
-For an HTTP(S) locator, render it as a semantic line in the same text message:
+For an HTTP(S) locator, initially render the unchanged URL inside the preferred
+ordinary-text wrapper in the same message:
 
 ```text
-Report: https://github.com/.../report
+Report: "https://github.com/.../report"
 ```
 
 For a non-URL durable locator, use the same semantic form:
@@ -92,11 +93,11 @@ For a non-URL durable locator, use the same semantic form:
 Report: reports/codex/260910_codex_01.md
 ```
 
-`Report:` is presentation text; the underlying MCP field remains `locator`. Maintained renderers may localize the label when a stable locale is available, but must not alter the locator value.
+`Report:` and the wrapper are presentation text; the underlying MCP field remains `locator`. Maintained renderers may localize the label when a stable locale is available, but must not alter any character of the locator itself.
 
-Keep the raw HTTP(S) URL intact so Apple Messages and other clients may auto-detect it as a tappable link. Do not rely on Markdown link syntax because plain iMessage text does not guarantee Markdown rendering.
+Keep the HTTP(S) URL intact inside the wrapper so Apple Messages and other clients may still data-detect it as a tappable link. Do not rely on Markdown link syntax because plain iMessage text does not guarantee Markdown rendering.
 
-Whether Apple Messages chooses to show a rich link preview is client behavior and is not a product correctness requirement. The product correctness requirement is one application send containing both the summary and labeled locator.
+The qualified phone must not expand the locator into a large Apple Rich Link Preview. If the preferred quoted wrapper fails visual qualification, test at most one ordinary-text fallback wrapper. If no wrapper preserves both preview suppression and tap detection, prioritize a fully readable/copyable no-preview locator and record tap behavior as a platform limitation. Never insert zero-width characters or spaces into the URL.
 
 # Non-regression boundary
 
@@ -122,7 +123,8 @@ one logical terminal task causes at most one notify_human attempt
 PASS / PASS_WITH_LIMITATIONS / BLOCKED / FAIL remain accepted terminal statuses
 notification failure does not rewrite task truth
 locator is rendered in the same application message as the summary
-HTTP(S) locator is rendered as `Report: <raw-url>`
+HTTP(S) locator preserves the raw URL inside the selected ordinary-text wrapper
+qualified phone shows no large Rich Link Preview
 no second link-only send occurs
 existing notify_human dispatch/result behavior remains unchanged
 privacy/redaction tests remain green
@@ -137,6 +139,8 @@ ask_human is reserved for unresolved decisions
 AND default progress notification count is zero
 AND every terminal task attempts no more than one compact notify_human
 AND summary + locator are delivered in one application message
-AND raw HTTP(S) locators remain tappable-client-compatible
+AND HTTP(S) locators preserve exact readable/copyable URL characters
+AND the qualified phone shows no large Rich Link Preview
+AND tap detection is preserved whenever an ordinary-text wrapper permits it
 AND notification failure never changes established task truth
 ```

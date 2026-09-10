@@ -14,7 +14,8 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, ChildStdout, Command};
 use tokio::time::{sleep, timeout, Duration, Instant};
 
-pub const MIN_TOKEN_CHARS: usize = 4;
+pub const MIN_TOKEN_CHARS: usize = 5;
+pub const MAX_TOKEN_CHARS: usize = 63;
 pub const MAX_SOURCE_PROJECT_CHARS: usize = 80;
 pub const MAX_QUESTION_CHARS: usize = 160;
 pub const MAX_CONTEXT_FIELDS: usize = 2;
@@ -57,6 +58,7 @@ pub enum UnsupportedReason {
     DetailTooLong,
     RenderedTextTooLong,
     InvalidDecisionBudget,
+    InvalidToken,
     RequiredImageUnsupported,
 }
 
@@ -135,6 +137,9 @@ pub fn render_confirmation_with_config(
     config: &IMessageChannelConfig,
 ) -> Result<RenderedConfirmation, UnsupportedReason> {
     let budgets = decision_budgets(config)?;
+    if !valid_token(token) {
+        return Err(UnsupportedReason::InvalidToken);
+    }
     let question = compact_line(&request.detail.summary);
     if question.chars().count() > MAX_QUESTION_CHARS {
         return Err(UnsupportedReason::QuestionTooLong);
@@ -238,7 +243,7 @@ pub fn render_confirmation_with_config(
         ));
     }
     lines.push(String::new());
-    lines.push(format!("Reply: {token} 1"));
+    lines.push(format!("Reply: {token}-1"));
     let text = lines.join("\n");
     if text.chars().count() > budgets.rendered_max_chars {
         return Err(UnsupportedReason::RenderedTextTooLong);
@@ -280,15 +285,20 @@ pub fn watch_args(chat_id: i64, since_row_id: i64) -> Vec<String> {
     ]
 }
 
+pub(crate) fn valid_token(token: &str) -> bool {
+    (MIN_TOKEN_CHARS..=MAX_TOKEN_CHARS).contains(&token.len())
+        && token.len() % 2 == 1
+        && token.as_bytes()[0].is_ascii_digit()
+        && token.as_bytes()[0] != b'0'
+        && token.bytes().all(|byte| byte.is_ascii_digit())
+}
+
 pub fn parse_reply(text: &str) -> Option<(String, usize)> {
-    let (token, option) = text.split_once(' ')?;
-    if option.is_empty()
-        || option.contains(char::is_whitespace)
-        || token.len() < MIN_TOKEN_CHARS
-        || token.len() > 64
-        || !token
-            .chars()
-            .all(|c| c.is_ascii_digit() || ('A'..='F').contains(&c))
+    let (token, option) = text.trim().split_once('-')?;
+    if !valid_token(token)
+        || option.is_empty()
+        || option.as_bytes()[0] == b'0'
+        || !option.bytes().all(|byte| byte.is_ascii_digit())
     {
         return None;
     }
@@ -424,12 +434,19 @@ impl TokenRegistry {
             } else {
                 format!("{request_id}\0{salt}")
             };
-            let digest = format!("{:X}", Sha256::digest(material.as_bytes()));
-            for len in (MIN_TOKEN_CHARS..=digest.len()).step_by(2) {
-                let token = &digest[..len];
-                if !self.by_token.contains_key(token) {
-                    self.by_token.insert(token.into(), request_id.into());
-                    return token.into();
+            let digest = Sha256::digest(material.as_bytes());
+            let prefix = u32::from_be_bytes(digest[..4].try_into().expect("SHA-256 prefix"));
+            let mut token = (10_000 + prefix % 90_000).to_string();
+            if !self.by_token.contains_key(&token) {
+                self.by_token.insert(token.clone(), request_id.into());
+                return token;
+            }
+            for chunk in digest[4..].chunks_exact(2) {
+                let suffix = u16::from_be_bytes([chunk[0], chunk[1]]) % 100;
+                token.push_str(&format!("{suffix:02}"));
+                if !self.by_token.contains_key(&token) {
+                    self.by_token.insert(token.clone(), request_id.into());
+                    return token;
                 }
             }
         }
@@ -1169,12 +1186,12 @@ mod tests {
 
     #[test]
     fn renderer_uses_the_preferred_compact_shape_without_redundant_headings() {
-        let rendered = render_confirmation(&request(), "7F32", "Codex", Some("human-in-loop"))
+        let rendered = render_confirmation(&request(), "48273", "Codex", Some("human-in-loop"))
             .expect("supported request");
         assert_eq!(rendered.choice_indices, vec![0, 1]);
         assert_eq!(
             rendered.text,
-            "[HIL · 7F32]\nCodex · human-in-loop\n\nContinue?\n\n1  Continue [recommended]\n2  Stop\n\nReply: 7F32 1"
+            "[HIL · 48273]\nCodex · human-in-loop\n\nContinue?\n\n1  Continue [recommended]\n2  Stop\n\nReply: 48273-1"
         );
         for redundant in ["Context", "Question", "Action", "Delete generated objects"] {
             assert!(!rendered.text.contains(redundant));
@@ -1190,7 +1207,7 @@ mod tests {
         multiline.choices[0].label = "Looks\ncorrect".into();
         let rendered = render_confirmation(
             &multiline,
-            "7F32",
+            "48273",
             "Codex\nAgent",
             Some("human-in-loop\nproject"),
         )
@@ -1211,7 +1228,7 @@ mod tests {
     fn renderer_preserves_multiline_detail_as_decision_evidence() {
         let mut multiline = request();
         multiline.detail.body_md = "line A\nline B\n\nline C".into();
-        let rendered = render_confirmation(&multiline, "7F32", "Codex", None).unwrap();
+        let rendered = render_confirmation(&multiline, "48273", "Codex", None).unwrap();
 
         assert!(rendered
             .text
@@ -1224,7 +1241,7 @@ mod tests {
         for count in [999, 1000] {
             let mut bounded = request();
             bounded.detail.body_md = "界".repeat(count);
-            let rendered = render_confirmation(&bounded, "7F32", "Codex", None).unwrap();
+            let rendered = render_confirmation(&bounded, "48273", "Codex", None).unwrap();
             assert_eq!(rendered.text.matches('界').count(), count);
         }
 
@@ -1233,7 +1250,7 @@ mod tests {
         assert_eq!(
             format!(
                 "{:?}",
-                render_confirmation(&over, "7F32", "Codex", None).unwrap_err()
+                render_confirmation(&over, "48273", "Codex", None).unwrap_err()
             ),
             "DetailTooLong"
         );
@@ -1268,12 +1285,12 @@ mod tests {
         }
 
         let exact =
-            render_confirmation(&boundary_request(681), "7F32", &"S".repeat(80), None).unwrap();
+            render_confirmation(&boundary_request(679), "48273", &"S".repeat(80), None).unwrap();
         assert_eq!(exact.text.chars().count(), 1500);
         assert_eq!(
             format!(
                 "{:?}",
-                render_confirmation(&boundary_request(682), "7F32", &"S".repeat(80), None)
+                render_confirmation(&boundary_request(680), "48273", &"S".repeat(80), None)
                     .unwrap_err()
             ),
             "RenderedTextTooLong"
@@ -1285,7 +1302,7 @@ mod tests {
         let mut request = request();
         request.detail.body_md = "界".repeat(1500);
         assert_eq!(
-            render_confirmation(&request, "7F32", "Codex", None),
+            render_confirmation(&request, "48273", "Codex", None),
             Err(UnsupportedReason::DetailTooLong)
         );
 
@@ -1295,7 +1312,7 @@ mod tests {
             ..IMessageChannelConfig::default()
         };
         let rendered =
-            render_confirmation_with_config(&request, "7F32", "Codex", None, &config).unwrap();
+            render_confirmation_with_config(&request, "48273", "Codex", None, &config).unwrap();
         assert_eq!(rendered.text.matches('界').count(), 1500);
 
         for (detail, rendered) in [
@@ -1308,7 +1325,7 @@ mod tests {
             config.decision_detail_max_chars = detail;
             config.decision_rendered_max_chars = rendered;
             assert_eq!(
-                render_confirmation_with_config(&request, "7F32", "Codex", None, &config,),
+                render_confirmation_with_config(&request, "48273", "Codex", None, &config,),
                 Err(UnsupportedReason::InvalidDecisionBudget)
             );
         }
@@ -1316,69 +1333,72 @@ mod tests {
         config.decision_detail_max_chars = 4500;
         config.decision_rendered_max_chars = 5000;
         request.detail.body_md = "界".repeat(4500);
-        assert!(render_confirmation_with_config(&request, "7F32", "Codex", None, &config,).is_ok());
+        assert!(
+            render_confirmation_with_config(&request, "48273", "Codex", None, &config,).is_ok()
+        );
     }
 
     #[test]
     fn renderer_emits_zero_one_or_two_required_context_lines() {
-        let zero = render_confirmation(&request(), "7F32", "Codex", None).unwrap();
+        let zero = render_confirmation(&request(), "48273", "Codex", None).unwrap();
         assert_eq!(zero.text.lines().nth(1), Some("Codex"));
         assert!(!zero.text.contains("Release: candidate"));
 
         let mut one_request = request();
         one_request.context = vec![context("Release", "candidate")];
-        let one = render_confirmation(&one_request, "7F32", "Codex", None).unwrap();
+        let one = render_confirmation(&one_request, "48273", "Codex", None).unwrap();
         assert!(one.text.contains("\nRelease: candidate\n\nContinue?"));
 
         let mut two_request = one_request.clone();
         two_request.context.push(context("Risk", "renderer only"));
-        let two = render_confirmation(&two_request, "7F32", "Codex", None).unwrap();
+        let two = render_confirmation(&two_request, "48273", "Codex", None).unwrap();
         assert!(two
             .text
             .contains("\nRelease: candidate\nRisk: renderer only\n\nContinue?"));
 
         let mut three_request = two_request;
         three_request.context.push(context("Owner", "User"));
-        assert!(render_confirmation(&three_request, "7F32", "Codex", None).is_err());
+        assert!(render_confirmation(&three_request, "48273", "Codex", None).is_err());
     }
 
     #[test]
     fn renderer_enforces_line_and_field_budgets_without_truncation() {
         let mut long_title = request();
         long_title.title = "Title is canonical but not duplicated on the phone. ".repeat(4);
-        let rendered = render_confirmation(&long_title, "7F32", "Codex", Some("human-in-loop"))
+        let rendered = render_confirmation(&long_title, "48273", "Codex", Some("human-in-loop"))
             .expect("the compact renderer does not copy the title");
         assert!(!rendered.text.contains("Title is canonical"));
 
         let source = "S".repeat(80);
-        let rendered = render_confirmation(&request(), "7F32", &source, None).unwrap();
+        let rendered = render_confirmation(&request(), "48273", &source, None).unwrap();
         assert_eq!(rendered.text.lines().nth(1), Some(source.as_str()));
-        assert!(render_confirmation(&request(), "7F32", &"S".repeat(81), None).is_err());
+        assert!(render_confirmation(&request(), "48273", &"S".repeat(81), None).is_err());
 
         let mut long_context = request();
         long_context.context = vec![context("L", &"界".repeat(78))];
-        assert!(render_confirmation(&long_context, "7F32", "Codex", None).is_err());
+        assert!(render_confirmation(&long_context, "48273", "Codex", None).is_err());
 
         let mut long_question = request();
         long_question.detail.summary = "界".repeat(161);
-        assert!(render_confirmation(&long_question, "7F32", "Codex", None).is_err());
+        assert!(render_confirmation(&long_question, "48273", "Codex", None).is_err());
 
         let mut long_choice = request();
         long_choice.choices[0].label = "界".repeat(61);
-        assert!(render_confirmation(&long_choice, "7F32", "Codex", None).is_err());
+        assert!(render_confirmation(&long_choice, "48273", "Codex", None).is_err());
     }
 
     #[test]
     fn renderer_never_compacts_away_a_repository_label() {
         let repository = "R".repeat(10);
         let source = "S".repeat(67);
-        let rendered = render_confirmation(&request(), "7F32", &source, Some(&repository)).unwrap();
+        let rendered =
+            render_confirmation(&request(), "48273", &source, Some(&repository)).unwrap();
         assert_eq!(rendered.text.lines().nth(1).unwrap().chars().count(), 80);
         assert!(rendered.text.lines().nth(1).unwrap().ends_with(&repository));
 
         let source = "S".repeat(68);
         assert_eq!(
-            render_confirmation(&request(), "7F32", &source, Some(&repository)),
+            render_confirmation(&request(), "48273", &source, Some(&repository)),
             Err(UnsupportedReason::SourceProjectLineTooLong)
         );
     }
@@ -1405,7 +1425,7 @@ mod tests {
             role: ActionRole::Default,
             variant: None,
         });
-        let rendered = render_confirmation(&bounded, "7F32", &source, None).unwrap();
+        let rendered = render_confirmation(&bounded, "48273", &source, None).unwrap();
         assert!(rendered.text.contains(&first_context));
         assert!(rendered.text.contains(&second_context));
         assert!(rendered.text.contains(&question));
@@ -1419,7 +1439,7 @@ mod tests {
             role: ActionRole::Default,
             variant: None,
         });
-        let rendered = render_confirmation(&bounded, "7F32", &source, None).unwrap();
+        let rendered = render_confirmation(&bounded, "48273", &source, None).unwrap();
         assert_eq!(rendered.text.matches(&label).count(), 4);
 
         for id in ["fifth", "sixth"] {
@@ -1433,7 +1453,7 @@ mod tests {
         }
         bounded.detail.body_md = "证".repeat(1000);
         assert_eq!(
-            render_confirmation(&bounded, "7F32", &source, None),
+            render_confirmation(&bounded, "48273", &source, None),
             Err(UnsupportedReason::RenderedTextTooLong)
         );
     }
@@ -1443,7 +1463,7 @@ mod tests {
         let mut one_choice = request();
         one_choice.choices.truncate(1);
         assert_eq!(
-            render_confirmation(&one_choice, "7F32", "Codex", None),
+            render_confirmation(&one_choice, "48273", "Codex", None),
             Err(UnsupportedReason::ChoiceCount)
         );
 
@@ -1458,7 +1478,7 @@ mod tests {
             });
         }
         assert_eq!(
-            render_confirmation(&seven_choices, "7F32", "Codex", None),
+            render_confirmation(&seven_choices, "48273", "Codex", None),
             Err(UnsupportedReason::ChoiceCount)
         );
 
@@ -1478,7 +1498,7 @@ mod tests {
             default_action_id: None,
         };
         assert_eq!(
-            render_confirmation(&with_input, "7F32", "Codex", Some("human-in-loop")),
+            render_confirmation(&with_input, "48273", "Codex", Some("human-in-loop")),
             Err(UnsupportedReason::InteractiveInput)
         );
     }
@@ -1526,18 +1546,22 @@ mod tests {
 
     #[test]
     fn reply_parser_requires_exact_token_and_one_based_option() {
-        assert_eq!(parse_reply("7F32 2"), Some(("7F32".into(), 1)));
+        assert_eq!(parse_reply("48273-2"), Some(("48273".into(), 1)));
+        assert_eq!(parse_reply(" \t48273-1\n"), Some(("48273".into(), 0)));
         for invalid in [
-            "2",
-            "7F32",
-            "7F32 0",
-            "7F32 two",
-            "7F32 2 extra",
-            "7f32 2",
-            " 7F32 2",
-            "7F32  2",
-            "7F32\t2",
-            "7F32 2\n",
+            "1",
+            "48273",
+            "48273 1",
+            "48273 - 1",
+            "48273--1",
+            "48273_1",
+            "A7F3-1",
+            "04827-1",
+            "48273-0",
+            "48273-01",
+            "48273-two",
+            "48273-1 extra",
+            "prefix 48273-1",
         ] {
             assert_eq!(parse_reply(invalid), None, "accepted {invalid:?}");
         }
@@ -1569,20 +1593,46 @@ mod tests {
     }
 
     #[test]
-    fn token_registry_extends_or_rehashes_instead_of_reusing_an_active_token() {
-        let request_id = "request-with-forced-prefix-collisions";
-        let digest = format!("{:X}", Sha256::digest(request_id.as_bytes()));
+    fn token_registry_keeps_active_tokens_unique_and_releases_only_the_owner() {
         let mut registry = TokenRegistry::default();
-        for len in (MIN_TOKEN_CHARS..=digest.len()).step_by(2) {
-            registry
-                .by_token
-                .insert(digest[..len].into(), format!("occupied-{len}"));
-        }
+        let tokens = (0..1_000)
+            .map(|index| registry.allocate(&format!("request-{index}")))
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(tokens.len(), 1_000);
+        assert!(tokens.iter().all(|token| valid_token(token)));
 
-        let token = registry.allocate(request_id);
-        assert_ne!(token, digest);
+        let token = registry.allocate("release-fixture");
+        registry.release(&token, "different-request");
         assert_eq!(
             registry.by_token.get(&token).map(String::as_str),
+            Some("release-fixture")
+        );
+        registry.release(&token, "release-fixture");
+        assert!(!registry.by_token.contains_key(&token));
+        assert_eq!(registry.allocate("release-fixture"), token);
+    }
+
+    #[test]
+    fn token_registry_uses_salted_rehash_after_exhausting_one_digest() {
+        let request_id = "request-with-forced-prefix-collisions";
+        let digest = Sha256::digest(request_id.as_bytes());
+        let prefix = u32::from_be_bytes(digest[..4].try_into().unwrap());
+        let mut token = (10_000 + prefix % 90_000).to_string();
+        let mut registry = TokenRegistry::default();
+        registry.by_token.insert(token.clone(), "occupied-5".into());
+        for (index, chunk) in digest[4..].chunks_exact(2).enumerate() {
+            let suffix = u16::from_be_bytes([chunk[0], chunk[1]]) % 100;
+            token.push_str(&format!("{suffix:02}"));
+            registry
+                .by_token
+                .insert(token.clone(), format!("occupied-{}", 7 + index * 2));
+        }
+
+        let allocated = registry.allocate(request_id);
+        assert!(valid_token(&allocated));
+        assert_ne!(allocated, token);
+        assert_eq!(
+            registry.by_token.get(&allocated).map(String::as_str),
             Some(request_id)
         );
     }
@@ -1591,7 +1641,7 @@ mod tests {
     fn same_account_accepts_only_a_strictly_post_send_reply() {
         let mut pending = PendingReplies::default();
         pending.register(
-            "7F32",
+            "48273",
             "request-123",
             RequestBoundary {
                 identity_mode: crate::config::IMessageIdentityMode::SameAccount,
@@ -1609,7 +1659,7 @@ mod tests {
             reply_to_guid: None,
             created_at: "2026-09-07T10:00:01.000Z".into(),
             is_from_me: true,
-            text: Some("7F32 2".into()),
+            text: Some("48273-2".into()),
             is_reaction: false,
             has_attachments: false,
         };
@@ -1647,14 +1697,14 @@ mod tests {
             reply_to_guid: None,
             created_at: "2026-09-07T10:00:01.000Z".into(),
             is_from_me: true,
-            text: Some("7F32 1".into()),
+            text: Some("48273-1".into()),
             is_reaction: false,
             has_attachments: false,
         };
 
         for (token, message) in [
             (
-                "7F32",
+                "48273",
                 InboundMessage {
                     id: 100,
                     guid: "REQUEST-GUID".into(),
@@ -1662,35 +1712,35 @@ mod tests {
                 },
             ),
             (
-                "7F32",
+                "48273",
                 InboundMessage {
                     id: 99,
                     ..candidate.clone()
                 },
             ),
             (
-                "7F32",
+                "48273",
                 InboundMessage {
                     chat_id: 7,
                     ..candidate.clone()
                 },
             ),
             (
-                "7F32",
+                "48273",
                 InboundMessage {
                     text: Some("FFFF 1".into()),
                     ..candidate.clone()
                 },
             ),
             (
-                "7F32",
+                "48273",
                 InboundMessage {
-                    text: Some("7F32 3".into()),
+                    text: Some("48273-7".into()),
                     ..candidate.clone()
                 },
             ),
             (
-                "7F32",
+                "48273",
                 InboundMessage {
                     text: None,
                     has_attachments: true,
@@ -1698,7 +1748,7 @@ mod tests {
                 },
             ),
             (
-                "7F32",
+                "48273",
                 InboundMessage {
                     is_reaction: true,
                     ..candidate.clone()
@@ -1709,7 +1759,7 @@ mod tests {
             assert_eq!(pending.resolve(&message, 1_500), None);
         }
 
-        register(&mut pending, "7F32");
+        register(&mut pending, "48273");
         assert_eq!(pending.resolve(&candidate, 2_001), None, "expired reply");
     }
 
@@ -1717,7 +1767,7 @@ mod tests {
     fn inline_reply_guid_must_match_the_sent_request() {
         let mut pending = PendingReplies::default();
         pending.register(
-            "7F32",
+            "48273",
             "request-123",
             RequestBoundary {
                 identity_mode: crate::config::IMessageIdentityMode::SameAccount,
@@ -1735,7 +1785,7 @@ mod tests {
             reply_to_guid: Some("OTHER-GUID".into()),
             created_at: "2026-09-07T10:00:01.000Z".into(),
             is_from_me: true,
-            text: Some("7F32 1".into()),
+            text: Some("48273-1".into()),
             is_reaction: false,
             has_attachments: false,
         };
@@ -1746,7 +1796,7 @@ mod tests {
     fn distinct_peer_still_rejects_is_from_me() {
         let mut pending = PendingReplies::default();
         pending.register(
-            "7F32",
+            "48273",
             "request-123",
             RequestBoundary {
                 identity_mode: crate::config::IMessageIdentityMode::DistinctPeer,
@@ -1764,7 +1814,7 @@ mod tests {
             reply_to_guid: None,
             created_at: "2026-09-07T10:00:01.000Z".into(),
             is_from_me: true,
-            text: Some("7F32 1".into()),
+            text: Some("48273-1".into()),
             is_reaction: false,
             has_attachments: false,
         };
@@ -2100,10 +2150,27 @@ mod tests {
         let first = registry.allocate("request-a");
         let second = registry.allocate("request-a");
         assert_eq!(first, second);
-        assert!(first
-            .chars()
-            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_lowercase()));
-        assert!(first.len() >= MIN_TOKEN_CHARS);
+        assert_eq!(first, "19912", "stable SHA-256 decimal fixture changed");
+        assert_eq!(first.len(), 5);
+        assert_ne!(first.as_bytes()[0], b'0');
+        assert!(first.bytes().all(|byte| byte.is_ascii_digit()));
+
+        let mut collided = TokenRegistry::default();
+        collided.by_token.insert(first.clone(), "occupied-5".into());
+        let seven = collided.allocate("request-a");
+        assert_eq!(seven, "1991262");
+        assert_eq!(&seven[..5], first);
+
+        let mut collided_twice = TokenRegistry::default();
+        collided_twice
+            .by_token
+            .insert(first.clone(), "occupied-5".into());
+        collided_twice
+            .by_token
+            .insert(seven.clone(), "occupied-7".into());
+        let nine = collided_twice.allocate("request-a");
+        assert_eq!(nine, "199126233");
+        assert_eq!(&nine[..7], seven);
     }
 
     #[test]

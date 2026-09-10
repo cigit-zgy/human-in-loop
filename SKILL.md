@@ -230,13 +230,13 @@ Do not send separate completion, report-ready, push-complete, release-complete, 
 
 The notification is compact: project, task id when available, verdict, one short summary/blocker, and durable locator when available. It may include up to two short context fields when materially useful.
 
-When a durable locator exists, keep it inside the same application message as the summary. Render HTTP(S) locators as a labeled raw URL line such as:
+When a durable locator exists, keep it inside the same application message as the summary. Render HTTP(S) locators as a labeled quoted URL line so the full unchanged URL stays readable/copyable without expanding into a large Apple Rich Link Preview:
 
 ```text
-Report: https://github.com/.../report
+Report: "https://github.com/.../report"
 ```
 
-Do not send a separate link-only message. Keep the raw HTTP(S) URL intact so clients such as Apple Messages may auto-detect it as tappable. Do not rely on Markdown link syntax for plain iMessage rendering.
+Do not send a separate link-only message. Keep every URL character intact inside the wrapper so clients such as Apple Messages may still auto-detect it as tappable. Do not rely on Markdown link syntax for plain iMessage rendering.
 
 Do not send complete reports, task bodies, private channel configuration, credentials, or long logs.
 

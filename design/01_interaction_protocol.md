@@ -70,7 +70,7 @@ The default renderer uses the smallest phone-readable representation that still 
 Preferred repository-associated shape:
 
 ```text
-[HIL · 7F32]
+[HIL · 48273]
 Codex · water-biomodel-agent
 ASM3 Stage 4
 
@@ -79,13 +79,13 @@ Use exact fraction grammar for 1/14?
 1  Accept
 2  Stop
 
-Reply: 7F32 1
+Reply: 48273-1
 ```
 
 For repository-associated requests, the source/repository line is mandatory even when no additional task context is needed:
 
 ```text
-[HIL · 7F32]
+[HIL · 48273]
 Codex · human-in-loop
 
 Continue execution?
@@ -93,13 +93,13 @@ Continue execution?
 1  Continue
 2  Stop
 
-Reply: 7F32 1
+Reply: 48273-1
 ```
 
 Only genuinely non-repository interactions may omit the repository portion:
 
 ```text
-[HIL · 7F32]
+[HIL · 48273]
 Codex
 
 Continue execution?
@@ -107,7 +107,7 @@ Continue execution?
 1  Continue
 2  Stop
 
-Reply: 7F32 1
+Reply: 48273-1
 ```
 
 Presentation rules:
@@ -120,23 +120,23 @@ Presentation rules:
 6. The question is one compact paragraph.
 7. Choices use one-based numeric positions and one line each.
 8. The recommendation, when decision-relevant, is rendered compactly on the corresponding choice line, e.g. `[recommended]`.
-9. The final line is always `Reply: <TOKEN> <OPTION_NUMBER>`.
+9. The final line is always `Reply: <TOKEN>-<OPTION_NUMBER>`.
 10. Do not copy full commands, stack traces, diffs, logs, report bodies, or long local context into iMessage.
 11. Do not split one decision across multiple text messages merely to display more context.
 
-The short token is derived from the canonical request id and must be collision-safe among currently pending requests. The user reply must carry the token; bare `1` is not accepted because multiple Agents/requests may coexist.
+The token is deterministically derived from the canonical request id, uses ASCII decimal digits with no leading zero, and must be collision-safe among currently pending requests. Its normal length is five digits; an active collision extends it deterministically by two digits at a time. The user reply must carry the token; bare `1` is not accepted because multiple Agents/requests may coexist.
 
 Accepted reply grammar remains deliberately narrow:
 
 ```text
-<TOKEN> <OPTION_NUMBER>
+<TOKEN>-<OPTION_NUMBER>
 ```
 
 Examples:
 
 ```text
-7F32 1
-7F32 2
+48273-1
+48273-2
 ```
 
 No fuzzy natural-language intent parsing is used. Invalid or ambiguous replies do not resolve the request.

@@ -113,7 +113,14 @@ pub fn render(notification: &HumanNotification) -> Result<String, String> {
         lines.push(compact(&format!("{label}: {value}"), "context field", 80)?);
     }
     if let Some(value) = &notification.locator {
-        lines.push(format!("Report: {}", locator(value)?));
+        let locator = locator(value)?;
+        let http =
+            reqwest::Url::parse(&locator).is_ok_and(|url| matches!(url.scheme(), "http" | "https"));
+        if http {
+            lines.push(format!("Report: \"{locator}\""));
+        } else {
+            lines.push(format!("Report: {locator}"));
+        }
     }
     let text = lines.join("\n");
     if text.chars().count() > imessage::MAX_NOTIFICATION_RENDERED_CHARS {
@@ -245,15 +252,32 @@ mod tests {
     }
 
     #[test]
-    fn http_report_locator_stays_raw_in_the_same_application_message() {
+    fn http_report_locator_is_quoted_without_changing_the_url() {
         let mut notice = notification();
-        notice.locator =
-            Some("https://github.com/cigit-zgy/human-in-loop/blob/deadbeef/report.md".into());
+        let locator = "https://github.com/cigit-zgy/human-in-loop/blob/deadbeef/report.md?mode=raw%20copy#result";
+        notice.locator = Some(locator.into());
 
         let text = render(&notice).unwrap();
 
-        assert!(text.contains("Completed with one limitation.\nScope: Local verification\nReport: https://github.com/cigit-zgy/human-in-loop/blob/deadbeef/report.md"));
+        assert!(text.contains(&format!(
+            "Completed with one limitation.\nScope: Local verification\nReport: \"{locator}\""
+        )));
         assert!(!text.contains("[https://"));
+    }
+
+    #[test]
+    fn non_http_report_locator_keeps_the_compact_unquoted_form() {
+        for locator in [
+            "reports/codex/result.md",
+            "result.md:17",
+            "task/notification:0123456789abcdef",
+        ] {
+            let mut notice = notification();
+            notice.locator = Some(locator.into());
+            assert!(render(&notice)
+                .unwrap()
+                .ends_with(&format!("Report: {locator}")));
+        }
     }
 
     #[test]

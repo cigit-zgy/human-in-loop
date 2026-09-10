@@ -214,7 +214,7 @@ same configured direct chat
 message strictly after request send/cursor boundary
 candidate GUID differs from sent request GUID
 is_from_me == false in production distinct-peer topology
-text exactly matches <TOKEN> <OPTION_NUMBER>
+text exactly matches <TOKEN>-<OPTION_NUMBER>
 token maps to exactly one active request
 option number is valid
 request is still active

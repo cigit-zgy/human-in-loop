@@ -34,8 +34,13 @@ The current accepted design lives under [`design/`](design/README.md); historica
 
 Normal terminal task completion attempts one compact `notify_human` delivery.
 Routine progress and heartbeat notifications are disabled by default. A terminal
-notification includes its durable locator as `Report: <raw URL or path>` inside
-the same application message.
+notification includes its durable locator inside the same application message:
+HTTP(S) URLs use `Report: "<unchanged URL>"` to suppress large Apple Rich Link
+Previews while remaining readable/copyable, and non-URL paths remain unquoted.
+
+iMessage decisions use a deterministic five-digit decimal correlation token and
+the exact reply grammar `<TOKEN>-<OPTION_NUMBER>`, for example `48273-1`.
+Bare option numbers and the historical hexadecimal-space form are rejected.
 
 ## Production Apple Messages topology
 
