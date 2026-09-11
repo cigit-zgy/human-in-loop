@@ -4,8 +4,9 @@ title: Mobile reply token and compact link presentation
 status: active
 role: design_authority
 summary: >
-  Defines the low-friction numeric iMessage reply token grammar and the
-  best-effort no-rich-preview report-link presentation used by phone surfaces.
+  Defines the low-friction numeric iMessage reply token grammar, copy-friendly
+  reply presentation, and best-effort no-rich-preview report-link presentation
+  used by phone surfaces.
 operational_projection:
   - design/01_interaction_protocol.md
   - design/03_imessage_channel.md
@@ -16,13 +17,13 @@ operational_projection:
 
 # Purpose
 
-Reduce phone interaction cost without weakening request correlation, and keep report locators visually integrated with the compact terminal message instead of allowing Apple Messages to expand them into a large Rich Link Preview card.
+Reduce phone interaction cost without weakening request correlation, keep decision messages visually scannable, and keep report locators visually integrated with the compact terminal message instead of allowing Apple Messages to expand them into a large Rich Link Preview card.
 
-This topic is the current authority for the two narrow behaviors below. Where older text in `01_interaction_protocol.md`, `03_imessage_channel.md`, or `08_terminal_notification.md` still shows the historical hexadecimal-space reply grammar or treats Apple Rich Link Preview as acceptable, this topic supersedes those clauses until they are mechanically consolidated during the implementation task.
+This topic is the current authority for the narrow behaviors below. Where older text in `01_interaction_protocol.md`, `03_imessage_channel.md`, or `08_terminal_notification.md` still shows historical reply presentation, hexadecimal-space reply grammar, or treats Apple Rich Link Preview as acceptable, this topic supersedes those clauses until mechanically consolidated.
 
 # 1. Canonical mobile reply grammar
 
-The correlation token remains mandatory. Bare option replies such as `1` are not accepted in the default protocol.
+The correlation token remains mandatory. Bare option replies such as `1` are not accepted in the default remote protocol.
 
 The phone-facing canonical form is:
 
@@ -43,18 +44,37 @@ Semantics:
 = one-based rendered choice position
 ```
 
+## Copy-friendly rendered reply block
+
+The reply value MUST NOT share the same visual line as the `Reply:` label. Render exactly one blank line between them:
+
+```text
+Reply:
+
+48273-1
+```
+
+This is a usability requirement: the User frequently copies the reply value on mobile. Separating the value from the label makes selection/copying reliable and avoids copying `Reply:` accidentally.
+
 The rendered confirmation shape is therefore:
 
 ```text
 [HIL · 48273]
+
 Codex · project
+
 ...
 
 1  First choice
+
 2  Second choice
 
-Reply: 48273-1
+Reply:
+
+48273-1
 ```
+
+The renderer must preserve the blank line before and after logical content blocks supplied by the application when those line breaks are within the accepted payload budget. It must not compact distinct paragraphs into adjacent lines merely to reduce vertical space.
 
 ## Token requirements
 
@@ -162,7 +182,9 @@ Report: reports/codex/260910_codex_XX.md
 Before accepting this change, perform one combined real iMessage qualification on the installed/candidate path where practical:
 
 - the message uses a newly rendered decimal token and `TOKEN-OPTION` reply grammar;
+- the `Reply:` label and reply value are separated by exactly one blank line;
 - the body includes a harmless test report URL using the preferred no-preview wrapper;
+- the User can copy the standalone reply value without selecting the `Reply:` label;
 - the User can answer with the new numeric-hyphen reply without changing keyboard class;
 - the User reports whether the link preview is suppressed and whether the link remains tappable;
 - if the preferred wrapper fails, at most one fallback visual probe is permitted;
@@ -188,4 +210,4 @@ Do not redesign or weaken:
 
 # Design acceptance
 
-This topic is conforming when the User can normally answer an iMessage decision using a decimal-only `TOKEN-OPTION` string such as `48273-1`, correlation remains as strict as before, terminal report locators remain in the same application message, the qualified phone presentation no longer expands the report URL into a large Rich Link Preview, and the URL remains tappable whenever that can be achieved without private APIs or malformed locator text.
+This topic is conforming when the User can normally answer an iMessage decision using a decimal-only `TOKEN-OPTION` string such as `48273-1`, the reply value is rendered as its own copy-friendly paragraph beneath `Reply:`, application-supplied meaningful paragraph spacing is preserved, correlation remains as strict as before, terminal report locators remain in the same application message, the qualified phone presentation no longer expands the report URL into a large Rich Link Preview, and the URL remains tappable whenever that can be achieved without private APIs or malformed locator text.
