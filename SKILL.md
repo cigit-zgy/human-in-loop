@@ -16,7 +16,7 @@ Canonical maintained source:
 cigit-zgy/human-in-loop
 ```
 
-Current project design authority lives in `design/`. This Skill is the Codex-facing operational projection of `design/05_mcp_interface.md`, `design/06_codex_integration.md`, `design/08_terminal_notification.md`, `design/09_optional_bot_autologin.md`, and the setup/recovery boundary in `design/07_macos_runtime_deployment.md`.
+Current project design authority lives in `design/`. This Skill is the Codex-facing operational projection of `design/05_mcp_interface.md`, `design/06_codex_integration.md`, `design/08_terminal_notification.md`, `design/09_optional_bot_autologin.md`, `design/10_mobile_reply_and_link_presentation.md`, and the setup/recovery boundary in `design/07_macos_runtime_deployment.md`.
 
 The maintained remote delivery channel is Apple Messages using explicit iMessage only. If that channel is unavailable, mandatory decisions fail closed; no alternate remote or carrier transport is selected.
 
@@ -179,6 +179,18 @@ context
 → short metadata only, not a substitute for long-form evidence
 ```
 
+Meaningful paragraph spacing is part of the human-readable evidence surface. Preserve application-supplied blank lines between distinct content blocks when within budget; do not collapse headings, evidence paragraphs, choices, or other logical blocks into visually dense adjacent lines merely to save space.
+
+For phone decisions, the canonical reply footer is copy-oriented and rendered as:
+
+```text
+Reply:
+
+<TOKEN>-<OPTION_NUMBER>
+```
+
+The reply value is its own paragraph. Do not render it on the same line as `Reply:`.
+
 Do not flatten a substantive multiline review/design/release card into one `context` line merely to satisfy a transport renderer. Do not remove evidence required for a safe scientific, design, security, or publication decision just to make the message shorter.
 
 The normal iMessage decision-body defaults are intentionally generous enough for substantive decisions: approximately 1000 Unicode characters of `detail` and 1500 characters for the fully rendered message. The User may configure a larger operational budget within the product's absolute defensive ceiling. Never silently truncate content. If a payload exceeds the active safe budget, fail closed and surface the typed/redacted payload-size reason.
@@ -269,6 +281,7 @@ The human-in-loop contract is satisfied for a task when:
 all mandatory semantic checkpoints were resolved by correlated ask_human results or caused fail-closed BLOCKED state
 AND already-authorized routine work received no redundant semantic confirmation
 AND substantive evidence was preserved in the proper decision-body surface rather than silently truncated
+AND meaningful paragraph spacing and copy-friendly reply presentation were preserved
 AND default progress-notification count remained zero unless explicitly opted in
 AND no more than one terminal notification attempt was made for the logical task execution
 AND any durable report/link locator remained in the same terminal application message
