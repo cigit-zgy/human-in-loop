@@ -209,8 +209,10 @@ pub fn render_confirmation_with_config(
         }
         None => source,
     };
-    let mut lines = vec![format!("[HIL · {token}]"), source_line];
-    lines.extend(context_lines);
+    let mut blocks = vec![format!("[HIL · {token}]"), source_line];
+    if !context_lines.is_empty() {
+        blocks.push(context_lines.join("\n"));
+    }
     let detail = request
         .detail
         .body_md
@@ -222,12 +224,9 @@ pub fn render_confirmation_with_config(
         return Err(UnsupportedReason::DetailTooLong);
     }
     if !detail.is_empty() {
-        lines.push(String::new());
-        lines.push(detail);
+        blocks.push(detail);
     }
-    lines.push(String::new());
-    lines.push(question);
-    lines.push(String::new());
+    blocks.push(question);
     let default = request.presentation.default_action_id();
     for (position, (_, choice)) in choices.iter().enumerate() {
         let recommended = if default == Some(choice.id.as_str()) {
@@ -235,16 +234,16 @@ pub fn render_confirmation_with_config(
         } else {
             ""
         };
-        lines.push(format!(
+        blocks.push(format!(
             "{}  {}{}",
             position + 1,
             compact_line(&choice.label),
             recommended
         ));
     }
-    lines.push(String::new());
-    lines.push(format!("Reply: {token}-1"));
-    let text = lines.join("\n");
+    blocks.push("Reply:".into());
+    blocks.push(format!("{token}-1"));
+    let text = blocks.join("\n\n");
     if text.chars().count() > budgets.rendered_max_chars {
         return Err(UnsupportedReason::RenderedTextTooLong);
     }
@@ -874,24 +873,24 @@ fn diagnose_rows(rows: &[InboundMessage], locator: &str, chat_id: i64) -> Histor
     else {
         return result;
     };
-    if text.lines().last() != Some(format!("Reply: {token}-1").as_str()) {
+    let footer = format!("\n\nReply:\n\n{token}-1");
+    let Some(body) = text.strip_suffix(&footer) else {
         return result;
-    }
-    let mut choices: Vec<_> = text
-        .lines()
-        .rev()
-        .skip(2)
-        .take_while(|line| !line.is_empty())
-        .collect();
-    choices.reverse();
-    if !(MIN_CHOICES..=MAX_CHOICES).contains(&choices.len())
-        || choices
-            .iter()
-            .enumerate()
-            .any(|(index, line)| !line.starts_with(&format!("{}  ", index + 1)))
-    {
+    };
+    let body_blocks: Vec<_> = body.split("\n\n").collect();
+    let Some(choice_count) = (MIN_CHOICES..=MAX_CHOICES).find(|count| {
+        body_blocks.len() >= *count
+            && body_blocks[body_blocks.len() - *count..]
+                .iter()
+                .enumerate()
+                .all(|(index, block)| {
+                    block
+                        .strip_prefix(&format!("{}  ", index + 1))
+                        .is_some_and(|label| !label.is_empty() && !label.contains('\n'))
+                })
+    }) else {
         return result;
-    }
+    };
     // History is a bounded newest-first snapshot containing the identified send row.
     // Every later row in this chat is therefore covered, even if older history is truncated.
     if rows.windows(2).any(|pair| pair[0].id <= pair[1].id) || sent.guid.is_empty() {
@@ -911,7 +910,7 @@ fn diagnose_rows(rows: &[InboundMessage], locator: &str, chat_id: i64) -> Histor
                         .as_deref()
                         .is_none_or(|guid| guid == sent.guid)
                     && row.text.as_deref().and_then(parse_reply).is_some_and(
-                        |(reply_token, option)| reply_token == token && option < choices.len(),
+                        |(reply_token, option)| reply_token == token && option < choice_count,
                     )
             })
             .count();
@@ -1316,7 +1315,25 @@ mod tests {
             "INSUFFICIENT_EVIDENCE"
         );
         assert_eq!(
-            diagnose_rows(&[sent.clone(), sent], locator, 2).classification,
+            diagnose_rows(&[sent.clone(), sent.clone()], locator, 2).classification,
+            "INSUFFICIENT_EVIDENCE"
+        );
+
+        let mut old_footer = sent.clone();
+        old_footer.text = old_footer
+            .text
+            .map(|text| text.replace("\n\nReply:\n\n48273-1", "\n\nReply: 48273-1"));
+        assert_eq!(
+            diagnose_rows(&[old_footer], locator, 2).classification,
+            "INSUFFICIENT_EVIDENCE"
+        );
+
+        let mut adjacent_choices = sent.clone();
+        adjacent_choices.text = adjacent_choices
+            .text
+            .map(|text| text.replace("\n\n2  Stop", "\n2  Stop"));
+        assert_eq!(
+            diagnose_rows(&[adjacent_choices], locator, 2).classification,
             "INSUFFICIENT_EVIDENCE"
         );
     }
@@ -1405,8 +1422,10 @@ mod tests {
         assert_eq!(rendered.choice_indices, vec![0, 1]);
         assert_eq!(
             rendered.text,
-            "[HIL · 48273]\nCodex · human-in-loop\n\nContinue?\n\n1  Continue [recommended]\n2  Stop\n\nReply: 48273-1"
+            "[HIL · 48273]\n\nCodex · human-in-loop\n\nContinue?\n\n1  Continue [recommended]\n\n2  Stop\n\nReply:\n\n48273-1"
         );
+        assert_eq!(rendered.text.lines().last(), Some("48273-1"));
+        assert!(rendered.text.ends_with("Reply:\n\n48273-1"));
         for redundant in ["Context", "Question", "Action", "Delete generated objects"] {
             assert!(!rendered.text.contains(redundant));
         }
@@ -1428,14 +1447,16 @@ mod tests {
         .unwrap();
         assert!(rendered
             .text
-            .contains("\nCodex Agent · human-in-loop project\n"));
+            .contains("\n\nCodex Agent · human-in-loop project\n\n"));
         assert!(rendered
             .text
-            .contains("\nRelease status: candidate build\n"));
+            .contains("\n\nRelease status: candidate build\n\n"));
         assert!(rendered
             .text
             .contains("\nDoes this compact layout look correct?\n"));
-        assert!(rendered.text.contains("\n1  Looks correct [recommended]\n"));
+        assert!(rendered
+            .text
+            .contains("\n1  Looks correct [recommended]\n\n"));
     }
 
     #[test]
@@ -1499,16 +1520,44 @@ mod tests {
         }
 
         let exact =
-            render_confirmation(&boundary_request(679), "48273", &"S".repeat(80), None).unwrap();
+            render_confirmation(&boundary_request(671), "48273", &"S".repeat(80), None).unwrap();
         assert_eq!(exact.text.chars().count(), 1500);
         assert_eq!(
             format!(
                 "{:?}",
-                render_confirmation(&boundary_request(680), "48273", &"S".repeat(80), None)
+                render_confirmation(&boundary_request(672), "48273", &"S".repeat(80), None)
                     .unwrap_err()
             ),
             "RenderedTextTooLong"
         );
+    }
+
+    #[test]
+    fn renderer_accepts_each_supported_choice_count_with_blank_line_separation() {
+        for count in MIN_CHOICES..=MAX_CHOICES {
+            let mut bounded = request();
+            bounded.choices = (0..count)
+                .map(|index| ConfirmChoice {
+                    id: format!("choice-{index}"),
+                    label: format!("Choice {}", index + 1),
+                    description: String::new(),
+                    role: ActionRole::Default,
+                    variant: None,
+                })
+                .collect();
+            bounded.dismiss_action_id = format!("choice-{}", count - 1);
+
+            let rendered = render_confirmation(&bounded, "48273", "Codex", None).unwrap();
+            for index in 1..count {
+                assert!(rendered.text.contains(&format!(
+                    "\n\n{}  Choice {}\n\n{}  Choice {}",
+                    index,
+                    index,
+                    index + 1,
+                    index + 1
+                )));
+            }
+        }
     }
 
     #[test]
@@ -1528,6 +1577,17 @@ mod tests {
         let rendered =
             render_confirmation_with_config(&request, "48273", "Codex", None, &config).unwrap();
         assert_eq!(rendered.text.matches('界').count(), 1500);
+
+        config.decision_detail_max_chars = 1500;
+        config.decision_rendered_max_chars = 1586;
+        let exact =
+            render_confirmation_with_config(&request, "48273", "Codex", None, &config).unwrap();
+        assert_eq!(exact.text.chars().count(), 1586);
+        config.decision_rendered_max_chars = 1585;
+        assert_eq!(
+            render_confirmation_with_config(&request, "48273", "Codex", None, &config),
+            Err(UnsupportedReason::RenderedTextTooLong)
+        );
 
         for (detail, rendered) in [
             (0, 1500),
@@ -1555,7 +1615,7 @@ mod tests {
     #[test]
     fn renderer_emits_zero_one_or_two_required_context_lines() {
         let zero = render_confirmation(&request(), "48273", "Codex", None).unwrap();
-        assert_eq!(zero.text.lines().nth(1), Some("Codex"));
+        assert_eq!(zero.text.lines().nth(2), Some("Codex"));
         assert!(!zero.text.contains("Release: candidate"));
 
         let mut one_request = request();
@@ -1585,7 +1645,7 @@ mod tests {
 
         let source = "S".repeat(80);
         let rendered = render_confirmation(&request(), "48273", &source, None).unwrap();
-        assert_eq!(rendered.text.lines().nth(1), Some(source.as_str()));
+        assert_eq!(rendered.text.lines().nth(2), Some(source.as_str()));
         assert!(render_confirmation(&request(), "48273", &"S".repeat(81), None).is_err());
 
         let mut long_context = request();
@@ -1607,8 +1667,8 @@ mod tests {
         let source = "S".repeat(67);
         let rendered =
             render_confirmation(&request(), "48273", &source, Some(&repository)).unwrap();
-        assert_eq!(rendered.text.lines().nth(1).unwrap().chars().count(), 80);
-        assert!(rendered.text.lines().nth(1).unwrap().ends_with(&repository));
+        assert_eq!(rendered.text.lines().nth(2).unwrap().chars().count(), 80);
+        assert!(rendered.text.lines().nth(2).unwrap().ends_with(&repository));
 
         let source = "S".repeat(68);
         assert_eq!(

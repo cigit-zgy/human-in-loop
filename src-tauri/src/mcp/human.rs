@@ -946,7 +946,7 @@ mod tests {
             Some("human-in-loop"),
         )
         .unwrap();
-        assert_eq!(rendered.text.lines().nth(1), Some("Codex · human-in-loop"));
+        assert_eq!(rendered.text.lines().nth(2), Some("Codex · human-in-loop"));
         assert!(rendered.text.contains("1  Received [recommended]"));
     }
 
